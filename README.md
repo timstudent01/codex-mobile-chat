@@ -3,6 +3,8 @@
 
 A Bun + Hono service for viewing and chatting with local Codex sessions from mobile/desktop browsers.
 
+> Default runtime mode is **full access** (`danger-full-access`).
+
 ## Demo Video
 
 ### Codex Mobile Chat Demo

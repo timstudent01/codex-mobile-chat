@@ -3,6 +3,8 @@
 
 A Bun + Hono 服務，讓你可以在手機或桌面瀏覽器查看並延續本機 Codex session 對話。
 
+> 目前預設執行模式為 **全開權限**（`danger-full-access`）。
+
 ## 影片示範
 
 ### Codex Mobile Chat Demo
