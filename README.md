@@ -1,11 +1,13 @@
-# codex-mobile-chat
+﻿# codex-mobile-chat
 [繁體中文](./README.zh-TW.md)
 
 A Bun + Hono service for viewing and chatting with local Codex sessions from mobile/desktop browsers.
 
 ## Demo Video
 
-- YouTube: [Build a Mobile Codex Chat Demo](https://youtu.be/j081WtTBwgI)
+### Codex Mobile Chat Demo
+
+[![Codex Mobile Chat Demo](https://img.youtube.com/vi/j081WtTBwgI/maxresdefault.jpg)](https://youtu.be/j081WtTBwgI)
 
 ## Features
 
