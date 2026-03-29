@@ -118,6 +118,28 @@
         opacity: 1;
         transform: translate(-50%, 0);
       }
+      .scroll-to-bottom {
+        position: fixed;
+        left: 50%;
+        transform: translateX(-50%);
+        top: 120px;
+        z-index: 50;
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        border: 1px solid #97aae7;
+        background: #f2f6ff;
+        color: #1f3f8f;
+        font-size: 18px;
+        line-height: 1;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 18px rgba(43, 79, 221, 0.2);
+      }
+      .scroll-to-bottom.open {
+        display: inline-flex;
+      }
       .help-wrap {
         position: relative;
         display: inline-flex;
@@ -523,6 +545,11 @@
           font-size: 11px;
           padding: 7px 12px;
           max-width: min(94vw, 460px);
+        }
+        .scroll-to-bottom {
+          left: 50%;
+          transform: translateX(-50%);
+          top: 120px;
         }
       }
     

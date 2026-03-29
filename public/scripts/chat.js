@@ -30,6 +30,8 @@
       const activityWrap = document.getElementById("activityWrap");
       const activityBtn = document.getElementById("activityBtn");
       const activityPanel = document.getElementById("activityPanel");
+      const scrollToBottomBtn = document.getElementById("scrollToBottomBtn");
+      const bottomComposer = document.querySelector(".bottom");
 
       const params = new URLSearchParams(window.location.search);
       let selectedSessionId = params.get("sessionId");
@@ -542,6 +544,7 @@
         `;
         chat.appendChild(row);
         chat.scrollTop = chat.scrollHeight;
+        updateScrollToBottomButton();
         return row.querySelector(".bubble");
       }
 
@@ -568,6 +571,25 @@
           })
           .join("");
         chat.scrollTop = chat.scrollHeight;
+        updateScrollToBottomButton();
+      }
+
+      function updateScrollToBottomButton() {
+        if (!scrollToBottomBtn) return;
+        if (bottomComposer) {
+          const gap = 8;
+          const buttonHeight = 36;
+          const rect = bottomComposer.getBoundingClientRect();
+          const top = Math.max(8, rect.top - buttonHeight - gap);
+          scrollToBottomBtn.style.top = `${Math.round(top)}px`;
+          scrollToBottomBtn.style.bottom = "auto";
+        }
+        const distanceFromBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight;
+        if (distanceFromBottom > 140) {
+          scrollToBottomBtn.classList.add("open");
+        } else {
+          scrollToBottomBtn.classList.remove("open");
+        }
       }
 
       function formatNumber(num) {
@@ -883,6 +905,7 @@
                   textNode.textContent = `${current}${current ? "\n" : ""}${event.text || ""}`;
                 }
                 chat.scrollTop = chat.scrollHeight;
+                updateScrollToBottomButton();
                 continue;
               }
               if (event.type === "error") throw new Error(String(event.message || "Unknown stream error"));
@@ -970,6 +993,11 @@
         const img = e.target.closest(".inline-image");
         if (!(img instanceof HTMLImageElement)) return;
         openImageViewer(img.src, img.alt || "preview");
+      });
+      chat.addEventListener("scroll", updateScrollToBottomButton);
+      scrollToBottomBtn?.addEventListener("click", () => {
+        chat.scrollTo({ top: chat.scrollHeight, behavior: "smooth" });
+        updateScrollToBottomButton();
       });
 
       imageViewerClose.addEventListener("click", closeImageViewer);
@@ -1103,6 +1131,7 @@
       window.addEventListener("resize", () => {
         placeGlossaryPanel();
         placeActivityPanel();
+        updateScrollToBottomButton();
       });
 
       (async () => {
@@ -1115,6 +1144,7 @@
           await refreshServerLock();
           applyLanguage();
           autoResizePrompt();
+          updateScrollToBottomButton();
           promptInput.focus();
           setInterval(refreshServerLock, 2000);
         } catch (error) {
