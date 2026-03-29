@@ -16,6 +16,15 @@ const activeSessionRuns = new Map<string, number>();
 let activeRunCount = 0;
 const ERROR_LOG_PATH = "./logs/error.log";
 const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
+const AVAILABLE_MODELS = [
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "gpt-5.2-codex",
+  "gpt-5.2",
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+];
 
 type ErrorLogMeta = Record<string, unknown>;
 
@@ -81,6 +90,13 @@ app.get("/chat", serveChatPage);
 app.get("/api/sessions", async (c) => {
   const sessions = await listSessions();
   return c.json({ sessions });
+});
+
+app.get("/api/models", (c) => {
+  return c.json({
+    models: AVAILABLE_MODELS.map((model) => ({ value: model, label: model })),
+    defaultModel: AVAILABLE_MODELS[0] ?? null,
+  });
 });
 
 app.get("/api/sessions/:sessionId/messages", async (c) => {

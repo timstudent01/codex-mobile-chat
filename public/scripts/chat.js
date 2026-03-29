@@ -37,17 +37,8 @@
       let streamingAssistantBubble = null;
       let currentLang = localStorage.getItem("chat_lang") || "zh";
       const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
-      const MODEL_OPTIONS = [
-        { value: "", en: "Model: Auto", zh: "模型：自動" },
-        { value: "gpt-5.4", en: "gpt-5.4", zh: "gpt-5.4" },
-        { value: "gpt-5.4-mini", en: "gpt-5.4-mini", zh: "gpt-5.4-mini" },
-        { value: "gpt-5.3-codex", en: "gpt-5.3-codex", zh: "gpt-5.3-codex" },
-        { value: "gpt-5.2-codex", en: "gpt-5.2-codex", zh: "gpt-5.2-codex" },
-        { value: "gpt-5.2", en: "gpt-5.2", zh: "gpt-5.2" },
-        { value: "gpt-5.1-codex-max", en: "gpt-5.1-codex-max", zh: "gpt-5.1-codex-max" },
-        { value: "gpt-5.1-codex-mini", en: "gpt-5.1-codex-mini", zh: "gpt-5.1-codex-mini" },
-      ];
       let currentModel = normalizeModelValue(localStorage.getItem("chat_model"));
+      let availableModels = [];
       let lastStats = null;
       let cachedSessions = [];
       const activityEvents = [];
@@ -61,12 +52,52 @@
       }
 
       function renderModelPicker() {
-        const langKey = currentLang === "en" ? "en" : "zh";
-        const optionsHtml = MODEL_OPTIONS.map((item) => {
-          const selected = item.value === currentModel ? " selected" : "";
-          return `<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(item[langKey])}</option>`;
-        }).join("");
+        const optionsHtml = availableModels
+          .map((item) => {
+            const selected = item.value === currentModel ? " selected" : "";
+            return `<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(item.label)}</option>`;
+          })
+          .join("");
         modelPicker.innerHTML = optionsHtml;
+      }
+
+      async function loadModelOptions() {
+        try {
+          const res = await fetch("/api/models");
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Failed to load model list");
+          const rawModels = Array.isArray(data.models) ? data.models : [];
+          const parsed = rawModels
+            .map((item) => {
+              const value = normalizeModelValue(item?.value);
+              if (!value) return null;
+              return { value, label: String(item?.label || value) };
+            })
+            .filter(Boolean);
+          availableModels = parsed;
+
+          const defaultModel = normalizeModelValue(data.defaultModel);
+          if (!currentModel) {
+            currentModel = defaultModel || availableModels[0]?.value || "";
+            if (currentModel) localStorage.setItem("chat_model", currentModel);
+          }
+
+          if (
+            currentModel &&
+            !availableModels.some((item) => item.value === currentModel)
+          ) {
+            availableModels = [
+              { value: currentModel, label: `${currentModel} (custom)` },
+              ...availableModels,
+            ];
+          }
+        } catch {
+          availableModels = currentModel
+            ? [{ value: currentModel, label: `${currentModel} (custom)` }]
+            : [];
+        } finally {
+          renderModelPicker();
+        }
       }
 
             const I18N = {
@@ -940,8 +971,8 @@
         renderModelPicker();
         addActivity(
           currentLang === "en"
-            ? `Model switched: ${currentModel || "auto"}`
-            : `模型已切換：${currentModel || "自動"}`
+            ? `Model switched: ${currentModel || "none"}`
+            : `模型已切換：${currentModel || "未設定"}`
         );
       });
 
@@ -977,6 +1008,7 @@
         try {
           addActivity(currentLang === "en" ? "App started" : "應用已啟動");
           setLoading();
+          await loadModelOptions();
           await loadSessions();
           await loadMessages(selectedSessionId);
           await refreshServerLock();
