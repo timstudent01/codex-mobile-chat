@@ -44,6 +44,41 @@ const normalizeRequestedModel = (value: unknown): string | null => {
   return normalized;
 };
 
+const summarizeCodexEvent = (row: any): string | null => {
+  if (!row || typeof row !== "object") return null;
+
+  if (row.type === "thread.started") return "Thread started";
+  if (row.type === "turn.started") return "Turn started";
+  if (row.type === "turn.completed") return "Turn completed";
+
+  if (row.type === "item.started" || row.type === "item.completed") {
+    const item = row.item ?? row.payload ?? {};
+    const kind = String(item?.type ?? "").trim();
+    if (!kind || kind === "agent_message" || kind === "reasoning") return null;
+    const label =
+      String(item?.name ?? item?.tool_name ?? kind)
+        .replace(/[^\w.\-:/ ]/g, "")
+        .trim() || kind;
+    return `${row.type === "item.started" ? "Start" : "Done"}: ${label}`;
+  }
+
+  if (row.type === "response_item") {
+    const payload = row.payload ?? {};
+    const kind = String(payload?.type ?? "").trim();
+    if (kind === "function_call") {
+      const name = String(payload?.name ?? payload?.function?.name ?? "tool").trim();
+      return `Tool call: ${name || "tool"}`;
+    }
+    if (kind === "function_call_output") {
+      const name = String(payload?.name ?? payload?.function?.name ?? "tool").trim();
+      return `Tool output: ${name || "tool"}`;
+    }
+  }
+
+  if (row.type === "error") return "Error event";
+  return null;
+};
+
 async function logError(scope: string, error: unknown, meta: ErrorLogMeta = {}) {
   const timestamp = new Date().toISOString();
   const metaText =
@@ -292,6 +327,11 @@ app.post("/api/chat/stream", async (c) => {
                 row = JSON.parse(line);
               } catch {
                 continue;
+              }
+
+              const activityText = summarizeCodexEvent(row);
+              if (activityText) {
+                push({ type: "activity", text: activityText });
               }
 
               if (row?.type === "thread.started" && typeof row.thread_id === "string") {

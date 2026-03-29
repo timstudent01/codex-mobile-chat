@@ -91,6 +91,33 @@
         color: #1f4cbf;
         background: #eef3ff;
       }
+      .activity-bubble {
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translate(-50%, -8px);
+        z-index: 80;
+        min-width: 160px;
+        max-width: min(92vw, 560px);
+        border: 1px solid #8ea4e6;
+        background: rgba(33, 56, 130, 0.94);
+        color: #f8fbff;
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-size: 12px;
+        text-align: center;
+        box-shadow: 0 10px 26px rgba(16, 27, 63, 0.24);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.16s ease, transform 0.2s ease;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .activity-bubble.open {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
       .help-wrap {
         position: relative;
         display: inline-flex;
@@ -489,6 +516,13 @@
         }
         .top-actions {
           flex-wrap: wrap;
+        }
+        .activity-bubble {
+          top: 8px;
+          left: 50%;
+          font-size: 11px;
+          padding: 7px 12px;
+          max-width: min(94vw, 460px);
         }
       }
     

@@ -15,6 +15,7 @@
       const imageViewer = document.getElementById("imageViewer");
       const imageViewerImg = document.getElementById("imageViewerImg");
       const imageViewerClose = document.getElementById("imageViewerClose");
+      const activityBubble = document.getElementById("activityBubble");
       const statusText = document.getElementById("statusText");
       const appTitle = document.getElementById("appTitle");
       const langBtn = document.getElementById("langBtn");
@@ -43,6 +44,7 @@
       let cachedSessions = [];
       const activityEvents = [];
       let uploadedImages = [];
+      let activityBubbleTimer = null;
 
       function normalizeModelValue(value) {
         if (typeof value !== "string") return "";
@@ -124,6 +126,8 @@
           newSessionHint: "New session mode. Send your first message.",
           userNow: "user · now",
           assistantStreaming: "assistant · streaming",
+          roleUser: "user",
+          roleAssistant: "assistant",
           thinkingWord: "Thinking...",
           usageContextEmpty: "Context -",
           usage5hEmpty: "5h -",
@@ -156,6 +160,8 @@
           newSessionHint: "目前是新對話模式，送出第一則訊息即可建立。",
           userNow: "你 · 現在",
           assistantStreaming: "助手 · 串流中",
+          roleUser: "你",
+          roleAssistant: "助手",
           thinkingWord: "思考中...",
           usageContextEmpty: "上下文 -",
           usage5hEmpty: "5小時 -",
@@ -204,9 +210,48 @@
         activityPanel.innerHTML = `<div class="activity-title">${escapeHtml(title)}</div>${lines}`;
       }
       function addActivity(text) {
-        activityEvents.unshift({ time: formatClock(), text: String(text) });
+        const normalized = String(text || "").trim();
+        if (!normalized) return;
+        activityEvents.unshift({ time: formatClock(), text: normalized });
         if (activityEvents.length > 40) activityEvents.length = 40;
         renderActivityPanel();
+        showActivityBubble(normalized, isSending || serverLocked);
+      }
+
+      function showActivityBubble(text, keepOpen = false) {
+        if (!activityBubble) return;
+        const normalized = String(text || "").trim();
+        if (!normalized) return;
+        activityBubble.textContent = normalized;
+        activityBubble.classList.add("open");
+
+        if (activityBubbleTimer) {
+          clearTimeout(activityBubbleTimer);
+          activityBubbleTimer = null;
+        }
+
+        if (!keepOpen) {
+          activityBubbleTimer = setTimeout(() => {
+            activityBubble.classList.remove("open");
+            activityBubbleTimer = null;
+          }, 1800);
+        }
+      }
+
+      function hideActivityBubble(delayMs = 0) {
+        if (!activityBubble) return;
+        if (activityBubbleTimer) {
+          clearTimeout(activityBubbleTimer);
+          activityBubbleTimer = null;
+        }
+        if (delayMs > 0) {
+          activityBubbleTimer = setTimeout(() => {
+            activityBubble.classList.remove("open");
+            activityBubbleTimer = null;
+          }, delayMs);
+          return;
+        }
+        activityBubble.classList.remove("open");
       }
 
       function placeGlossaryPanel() {
@@ -467,6 +512,14 @@
       function setSendingState(sending) {
         isSending = sending;
         updateInputLock();
+        if (sending) {
+          showActivityBubble(
+            currentLang === "en" ? "Thinking..." : "思考中...",
+            true
+          );
+        } else {
+          hideActivityBubble(900);
+        }
       }
 
       function autoResizePrompt() {
@@ -501,12 +554,14 @@
         chat.innerHTML = messages
           .map((m) => {
             const roleClass = m.role === "user" ? "user" : "assistant";
-            const phase = m.phase ? ` · ${m.phase}` : "";
+            const roleLabel = m.role === "user" ? t("roleUser") : t("roleAssistant");
+            const localizedPhase = localizePhase(m.phase);
+            const phase = localizedPhase ? ` · ${localizedPhase}` : "";
             return `
               <div class="row ${roleClass}">
                 <div class="bubble">
                   ${renderMessageHtml(m.text)}
-                  <div class="meta">${m.role}${phase}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}</div>
+                  <div class="meta">${roleLabel}${phase}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}</div>
                 </div>
               </div>
             `;
@@ -518,6 +573,29 @@
       function formatNumber(num) {
         if (num === null || num === undefined || Number.isNaN(num)) return "-";
         return Number(num).toLocaleString("en-US");
+      }
+
+      function localizePhase(phase) {
+        const raw = String(phase || "").trim();
+        if (!raw || currentLang === "en") return raw;
+        const PHASE_ZH = {
+          final_answer: "最終回覆",
+          reasoning: "推理",
+          analysis: "分析",
+          commentary: "說明",
+        };
+        return PHASE_ZH[raw] || raw;
+      }
+
+      function localizeStatusWord(statusWord) {
+        const raw = String(statusWord || "").trim();
+        if (!raw || currentLang === "en") return raw;
+        const STATUS_ZH = {
+          started: "已開始",
+          thinking: "思考中",
+          done: "完成",
+        };
+        return STATUS_ZH[raw] || raw;
       }
 
       function renderUsage(stats) {
@@ -761,8 +839,29 @@
               if (event.type === "status") {
                 gotStreamEvent = true;
                 const text = String(event.text || "thinking");
-                setStatus(text === "thinking" ? t("statusThinking") : `${t("statusSending")} (${text})`);
-                addActivity(currentLang === "en" ? `Status: ${text}` : `狀態：${text}`);
+                const statusText = localizeStatusWord(text);
+                setStatus(
+                  text === "thinking"
+                    ? t("statusThinking")
+                    : `${t("statusSending")} (${statusText || text})`
+                );
+                addActivity(
+                  currentLang === "en"
+                    ? `Status: ${statusText || text}`
+                    : `狀態：${statusText || text}`
+                );
+                showActivityBubble(
+                  currentLang === "en"
+                    ? `Status: ${statusText || text}`
+                    : `狀態：${statusText || text}`,
+                  true
+                );
+                continue;
+              }
+              if (event.type === "activity") {
+                gotStreamEvent = true;
+                const text = String(event.text || "").trim();
+                if (text) addActivity(text);
                 continue;
               }
               if (event.type === "session" && event.sessionId) {
@@ -790,6 +889,7 @@
               if (event.type === "done") {
                 setStatus(t("statusDone"));
                 addActivity(currentLang === "en" ? "Stream done" : "串流完成");
+                hideActivityBubble(700);
               }
             }
           }
@@ -810,6 +910,7 @@
               ? `Error: ${error instanceof Error ? error.message : "Unknown error"}`
               : `錯誤：${error instanceof Error ? error.message : "未知錯誤"}`
           );
+          hideActivityBubble(1200);
         } finally {
           if (syncTimer) clearInterval(syncTimer);
           if (selectedSessionId) await loadMessages(selectedSessionId, { showLoading: false });
