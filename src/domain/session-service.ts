@@ -34,7 +34,13 @@ export type SessionStats = {
   updatedAt: string | null;
 };
 
+type TokenCountSnapshot = {
+  payload: any;
+  timestamp: string | null;
+};
+
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
 
 function getSessionIdFromRolloutPath(filePath: string): string | null {
   const match = filePath.match(/rollout-.*-([0-9a-f-]{36})\.jsonl$/i);
@@ -80,6 +86,69 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
     return file;
   }
   return null;
+}
+
+async function getLatestTokenCountFromFile(filePath: string): Promise<TokenCountSnapshot | null> {
+  const lines = (await Bun.file(filePath).text()).split(/\r?\n/).filter(Boolean);
+  let latest: any = null;
+  let latestTs: string | null = null;
+
+  for (const line of lines) {
+    let row: any;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (row?.type === "event_msg" && row?.payload?.type === "token_count") {
+      latest = row.payload;
+      latestTs = row.timestamp ?? null;
+    }
+  }
+
+  if (!latest) return null;
+  return { payload: latest, timestamp: latestTs };
+}
+
+const GLOBAL_STATS_CACHE_TTL_MS = 8_000;
+let cachedGlobalTokenCount: {
+  expiresAt: number;
+  snapshot: TokenCountSnapshot | null;
+} | null = null;
+
+async function getLatestGlobalTokenCount(): Promise<TokenCountSnapshot | null> {
+  const now = Date.now();
+  if (cachedGlobalTokenCount && cachedGlobalTokenCount.expiresAt > now) {
+    return cachedGlobalTokenCount.snapshot;
+  }
+
+  const codexHome = getCodexHome().replaceAll("\\", "/");
+  const pattern = `${codexHome}/sessions/**/rollout-*-*.jsonl`;
+  let latestSnapshot: TokenCountSnapshot | null = null;
+
+  for await (const sessionFile of new Bun.Glob(pattern).scan()) {
+    const snapshot = await getLatestTokenCountFromFile(sessionFile);
+    if (!snapshot) continue;
+
+    if (!latestSnapshot) {
+      latestSnapshot = snapshot;
+      continue;
+    }
+
+    const currentTs = latestSnapshot.timestamp ? Date.parse(latestSnapshot.timestamp) : NaN;
+    const candidateTs = snapshot.timestamp ? Date.parse(snapshot.timestamp) : NaN;
+    if (Number.isFinite(candidateTs) && (!Number.isFinite(currentTs) || candidateTs > currentTs)) {
+      latestSnapshot = snapshot;
+    }
+  }
+
+  cachedGlobalTokenCount = {
+    expiresAt: now + GLOBAL_STATS_CACHE_TTL_MS,
+    snapshot: latestSnapshot,
+  };
+
+  return latestSnapshot;
 }
 
 async function readSessionMetaCwd(sessionId: string): Promise<string | null> {
@@ -300,7 +369,8 @@ export async function getSessionMessages(sessionId: string): Promise<SessionMess
 
 export async function chatWithSession(
   sessionId: string,
-  prompt: string
+  prompt: string,
+  model?: string | null
 ): Promise<SessionChatResult> {
   const normalizedSessionId = sessionId.trim();
   if (!ID_PATTERN.test(normalizedSessionId)) {
@@ -311,21 +381,28 @@ export async function chatWithSession(
   if (!userPrompt) {
     throw new Error("Prompt is required");
   }
+  const normalizedModel = (model ?? "").trim();
+  if (normalizedModel && !MODEL_PATTERN.test(normalizedModel)) {
+    throw new Error("Invalid model");
+  }
 
   const cwd = (await readSessionMetaCwd(sessionId)) ?? process.cwd();
+  const args = ["codex", "exec"] as string[];
+  if (normalizedModel) {
+    args.push("-m", normalizedModel);
+  }
+  args.push(
+    "-s",
+    "danger-full-access",
+    "resume",
+    normalizedSessionId,
+    "-",
+    "--skip-git-repo-check",
+    "--json"
+  );
 
   const proc = Bun.spawn(
-    [
-      "codex",
-      "exec",
-      "-s",
-      "danger-full-access",
-      "resume",
-      normalizedSessionId,
-      "-",
-      "--skip-git-repo-check",
-      "--json",
-    ],
+    args,
     {
       cwd,
       stdin: "pipe",
@@ -358,22 +435,26 @@ export async function chatWithSession(
   return { sessionId: normalizedSessionId, assistantText, exitCode };
 }
 
-export async function createNewSession(prompt: string): Promise<SessionChatResult> {
+export async function createNewSession(
+  prompt: string,
+  model?: string | null
+): Promise<SessionChatResult> {
   const userPrompt = prompt.trim();
   if (!userPrompt) {
     throw new Error("Prompt is required");
   }
+  const normalizedModel = (model ?? "").trim();
+  if (normalizedModel && !MODEL_PATTERN.test(normalizedModel)) {
+    throw new Error("Invalid model");
+  }
+  const args = ["codex", "exec"] as string[];
+  if (normalizedModel) {
+    args.push("-m", normalizedModel);
+  }
+  args.push("-s", "danger-full-access", "--skip-git-repo-check", "--json", "-");
 
   const proc = Bun.spawn(
-    [
-      "codex",
-      "exec",
-      "-s",
-      "danger-full-access",
-      "--skip-git-repo-check",
-      "--json",
-      "-",
-    ],
+    args,
     {
       cwd: process.cwd(),
       stdin: "pipe",
@@ -427,39 +508,30 @@ export async function getSessionStats(sessionId: string): Promise<SessionStats> 
     };
   }
 
-  const lines = (await Bun.file(filePath).text()).split(/\r?\n/).filter(Boolean);
-  let latest: any = null;
-  let latestTs: string | null = null;
-
-  for (const line of lines) {
-    let row: any;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
-    if (row?.type === "event_msg" && row?.payload?.type === "token_count") {
-      latest = row.payload;
-      latestTs = row.timestamp ?? null;
-    }
-  }
+  const sessionSnapshot = await getLatestTokenCountFromFile(filePath);
+  const latest = sessionSnapshot?.payload ?? null;
+  const latestTs = sessionSnapshot?.timestamp ?? null;
+  const globalSnapshot = await getLatestGlobalTokenCount();
 
   if (!latest) {
     return {
       contextWindow: null,
       contextUsed: null,
       contextRemaining: null,
-      fiveHourUsedPercent: null,
-      weekUsedPercent: null,
-      updatedAt: latestTs,
+      fiveHourUsedPercent: Number.isFinite(Number(globalSnapshot?.payload?.rate_limits?.primary?.used_percent))
+        ? Number(globalSnapshot?.payload?.rate_limits?.primary?.used_percent)
+        : null,
+      weekUsedPercent: Number.isFinite(Number(globalSnapshot?.payload?.rate_limits?.secondary?.used_percent))
+        ? Number(globalSnapshot?.payload?.rate_limits?.secondary?.used_percent)
+        : null,
+      updatedAt: globalSnapshot?.timestamp ?? latestTs,
     };
   }
 
   const contextWindow = Number(latest?.info?.model_context_window ?? NaN);
   const contextUsed = Number(latest?.info?.last_token_usage?.total_tokens ?? NaN);
-  const fiveHourUsed = Number(latest?.rate_limits?.primary?.used_percent ?? NaN);
-  const weekUsed = Number(latest?.rate_limits?.secondary?.used_percent ?? NaN);
+  const fiveHourUsed = Number(globalSnapshot?.payload?.rate_limits?.primary?.used_percent ?? NaN);
+  const weekUsed = Number(globalSnapshot?.payload?.rate_limits?.secondary?.used_percent ?? NaN);
 
   const safeWindow = Number.isFinite(contextWindow) ? contextWindow : null;
   const safeUsed = Number.isFinite(contextUsed) ? contextUsed : null;
@@ -472,6 +544,6 @@ export async function getSessionStats(sessionId: string): Promise<SessionStats> 
     contextRemaining: safeRemaining,
     fiveHourUsedPercent: Number.isFinite(fiveHourUsed) ? fiveHourUsed : null,
     weekUsedPercent: Number.isFinite(weekUsed) ? weekUsed : null,
-    updatedAt: latestTs,
+    updatedAt: globalSnapshot?.timestamp ?? latestTs,
   };
 }

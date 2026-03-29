@@ -63,12 +63,23 @@
         font-size: 12px;
         font-weight: 600;
       }
+      .model-picker {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--panel);
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        max-width: 180px;
+        margin-left: auto;
+      }
       .usage {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
         justify-content: flex-end;
         align-items: center;
+        margin-top: 6px;
       }
       .usage-line {
         color: #41506f;
@@ -171,7 +182,8 @@
         white-space: pre-wrap;
       }
       .session-picker {
-        width: 100%;
+        width: min(100%, 520px);
+        margin-left: auto;
         border-radius: 10px;
         border: 1px solid var(--border);
         background: var(--panel);
@@ -496,20 +508,21 @@
           <div class="top-actions">
             <button id="menuBtn" class="menu-btn" type="button" aria-label="Open sessions">&#9776;</button>
             <button id="langBtn" class="lang-btn" type="button">中文</button>
-            <div class="usage">
-              <div id="usageContext" class="usage-line">Context -</div>
-              <div id="usage5h" class="usage-line">5h -</div>
-              <div id="usageWeek" class="usage-line">Week -</div>
-              <div id="streamBadge" class="stream-badge">Realtime: Stream + Sync backup</div>
-              <div id="helpWrap" class="help-wrap">
-                <button id="helpBtn" class="help-btn" type="button" aria-label="Help">?</button>
-                <div id="glossaryPanel" class="glossary"></div>
-              </div>
-              <div id="activityWrap" class="help-wrap">
-                <button id="activityBtn" class="activity-btn" type="button" aria-label="Activity">...</button>
-                <div id="activityPanel" class="activity-panel"></div>
-              </div>
-            </div>
+            <select id="modelPicker" class="model-picker" aria-label="Model"></select>
+          </div>
+        </div>
+        <div class="usage">
+          <div id="usageContext" class="usage-line">Context -</div>
+          <div id="usage5h" class="usage-line">5h -</div>
+          <div id="usageWeek" class="usage-line">Week -</div>
+          <div id="streamBadge" class="stream-badge">Realtime: Stream + Sync backup</div>
+          <div id="helpWrap" class="help-wrap">
+            <button id="helpBtn" class="help-btn" type="button" aria-label="Help">?</button>
+            <div id="glossaryPanel" class="glossary"></div>
+          </div>
+          <div id="activityWrap" class="help-wrap">
+            <button id="activityBtn" class="activity-btn" type="button" aria-label="Activity">...</button>
+            <div id="activityPanel" class="activity-panel"></div>
           </div>
         </div>
         <select id="sessionPicker" class="session-picker"></select>
@@ -579,6 +592,7 @@
       const statusText = document.getElementById("statusText");
       const appTitle = document.getElementById("appTitle");
       const langBtn = document.getElementById("langBtn");
+      const modelPicker = document.getElementById("modelPicker");
       const streamBadge = document.getElementById("streamBadge");
       const usageContext = document.getElementById("usageContext");
       const usage5h = document.getElementById("usage5h");
@@ -596,10 +610,38 @@
       let serverLocked = false;
       let streamingAssistantBubble = null;
       let currentLang = localStorage.getItem("chat_lang") || "zh";
+      const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
+      const MODEL_OPTIONS = [
+        { value: "", en: "Model: Auto", zh: "模型：自動" },
+        { value: "gpt-5.4", en: "gpt-5.4", zh: "gpt-5.4" },
+        { value: "gpt-5.4-mini", en: "gpt-5.4-mini", zh: "gpt-5.4-mini" },
+        { value: "gpt-5.3-codex", en: "gpt-5.3-codex", zh: "gpt-5.3-codex" },
+        { value: "gpt-5.2-codex", en: "gpt-5.2-codex", zh: "gpt-5.2-codex" },
+        { value: "gpt-5.2", en: "gpt-5.2", zh: "gpt-5.2" },
+        { value: "gpt-5.1-codex-max", en: "gpt-5.1-codex-max", zh: "gpt-5.1-codex-max" },
+        { value: "gpt-5.1-codex-mini", en: "gpt-5.1-codex-mini", zh: "gpt-5.1-codex-mini" },
+      ];
+      let currentModel = normalizeModelValue(localStorage.getItem("chat_model"));
       let lastStats = null;
       let cachedSessions = [];
       const activityEvents = [];
       let uploadedImages = [];
+
+      function normalizeModelValue(value) {
+        if (typeof value !== "string") return "";
+        const normalized = value.trim();
+        if (!normalized) return "";
+        return MODEL_PATTERN.test(normalized) ? normalized : "";
+      }
+
+      function renderModelPicker() {
+        const langKey = currentLang === "en" ? "en" : "zh";
+        const optionsHtml = MODEL_OPTIONS.map((item) => {
+          const selected = item.value === currentModel ? " selected" : "";
+          return `<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(item[langKey])}</option>`;
+        }).join("");
+        modelPicker.innerHTML = optionsHtml;
+      }
 
             const I18N = {
         en: {
@@ -783,6 +825,7 @@
         attachBtn.textContent = t("attachBtn");
         sendBtn.textContent = t("sendBtn");
         streamBadge.textContent = t("streamBadge");
+        renderModelPicker();
         glossaryPanel.innerHTML = getGlossaryHtml();
         renderActivityPanel();
         renderUsage(lastStats);
@@ -953,6 +996,7 @@
         sendBtn.disabled = locked;
         attachBtn.disabled = locked;
         imageInput.disabled = locked;
+        modelPicker.disabled = locked;
         picker.disabled = locked;
         menuBtn.disabled = locked;
         newSessionBtn.disabled = locked;
@@ -1171,7 +1215,7 @@
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: promptWithImages }),
+          body: JSON.stringify({ prompt: promptWithImages, model: currentModel || null }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Send failed");
@@ -1211,7 +1255,11 @@
           const res = await fetch("/api/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId: selectedSessionId, prompt: promptWithImages }),
+            body: JSON.stringify({
+              sessionId: selectedSessionId,
+              prompt: promptWithImages,
+              model: currentModel || null,
+            }),
           });
           if (!res.ok) throw new Error("Stream failed");
 
@@ -1458,6 +1506,17 @@
         currentLang = currentLang === "en" ? "zh" : "en";
         localStorage.setItem("chat_lang", currentLang);
         applyLanguage();
+      });
+
+      modelPicker.addEventListener("change", () => {
+        currentModel = normalizeModelValue(modelPicker.value);
+        localStorage.setItem("chat_model", currentModel);
+        renderModelPicker();
+        addActivity(
+          currentLang === "en"
+            ? `Model switched: ${currentModel || "auto"}`
+            : `模型已切換：${currentModel || "自動"}`
+        );
       });
 
       helpBtn.addEventListener("click", (e) => {

@@ -15,6 +15,7 @@ const app = new Hono();
 const activeSessionRuns = new Map<string, number>();
 let activeRunCount = 0;
 const ERROR_LOG_PATH = "./logs/error.log";
+const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
 
 type ErrorLogMeta = Record<string, unknown>;
 
@@ -23,6 +24,16 @@ const toErrorMessage = (error: unknown): string =>
 
 const toErrorStack = (error: unknown): string =>
   error instanceof Error && error.stack ? error.stack : "";
+
+const normalizeRequestedModel = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (!MODEL_PATTERN.test(normalized)) {
+    throw new Error("Invalid model");
+  }
+  return normalized;
+};
 
 async function logError(scope: string, error: unknown, meta: ErrorLogMeta = {}) {
   const timestamp = new Date().toISOString();
@@ -157,9 +168,14 @@ app.post("/api/uploads", async (c) => {
 });
 
 app.post("/api/chat/stream", async (c) => {
-  const { sessionId, prompt } = await c.req.json<{ sessionId?: string | null; prompt?: string }>();
+  const { sessionId, prompt, model } = await c.req.json<{
+    sessionId?: string | null;
+    prompt?: string;
+    model?: string | null;
+  }>();
   const userPrompt = (prompt ?? "").trim();
   const normalizedSessionId = (sessionId ?? "").trim();
+  const normalizedModel = normalizeRequestedModel(model);
 
   if (!userPrompt) {
     return c.json({ error: "Prompt is required" }, 400);
@@ -207,27 +223,23 @@ app.post("/api/chat/stream", async (c) => {
           ? ((await getSessionCwd(normalizedSessionId)) ?? process.cwd())
           : process.cwd();
 
-        const args = normalizedSessionId
-          ? [
-              "codex",
-              "exec",
-              "-s",
-              "danger-full-access",
-              "resume",
-              normalizedSessionId,
-              "-",
-              "--skip-git-repo-check",
-              "--json",
-            ]
-          : [
-              "codex",
-              "exec",
-              "-s",
-              "danger-full-access",
-              "--skip-git-repo-check",
-              "--json",
-              "-",
-            ];
+        const args = ["codex", "exec"] as string[];
+        if (normalizedModel) {
+          args.push("-m", normalizedModel);
+        }
+        if (normalizedSessionId) {
+          args.push(
+            "-s",
+            "danger-full-access",
+            "resume",
+            normalizedSessionId,
+            "-",
+            "--skip-git-repo-check",
+            "--json"
+          );
+        } else {
+          args.push("-s", "danger-full-access", "--skip-git-repo-check", "--json", "-");
+        }
 
         const proc = Bun.spawn(args, {
           cwd,
@@ -360,10 +372,11 @@ app.post("/api/chat/stream", async (c) => {
 
 app.post("/api/sessions/new/chat", async (c) => {
   try {
-    const body = await c.req.json<{ prompt?: string }>();
+    const body = await c.req.json<{ prompt?: string; model?: string | null }>();
     const prompt = body.prompt ?? "";
+    const model = normalizeRequestedModel(body.model);
 
-    const result = await createNewSession(prompt);
+    const result = await createNewSession(prompt, model);
     const messages = await getSessionMessages(result.sessionId);
 
     return c.json({
@@ -384,10 +397,11 @@ app.post("/api/sessions/new/chat", async (c) => {
 app.post("/api/sessions/:sessionId/chat", async (c) => {
   const sessionId = c.req.param("sessionId");
   try {
-    const body = await c.req.json<{ prompt?: string }>();
+    const body = await c.req.json<{ prompt?: string; model?: string | null }>();
     const prompt = body.prompt ?? "";
+    const model = normalizeRequestedModel(body.model);
 
-    const result = await chatWithSession(sessionId, prompt);
+    const result = await chatWithSession(sessionId, prompt, model);
     const messages = await getSessionMessages(sessionId);
 
     return c.json({
