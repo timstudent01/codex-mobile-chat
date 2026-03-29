@@ -49,7 +49,60 @@ type ActivitySummary = {
   text: string;
 };
 
-const summarizeCodexEvent = (row: any): ActivitySummary | null => {
+const truncateForActivity = (text: string, max = 120): string => {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > max ? `${normalized.slice(0, max - 3)}...` : normalized;
+};
+
+const parseJsonObject = (raw: unknown): Record<string, unknown> | null => {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const summarizeFunctionCall = (name: string, argsRaw: unknown): string => {
+  const args = parseJsonObject(argsRaw);
+  if (!args) return `Tool call: ${name}`;
+
+  if (name === "shell_command" && typeof args.command === "string") {
+    return `Tool call: shell_command — ${truncateForActivity(args.command, 100)}`;
+  }
+
+  const preferredKeys = ["path", "file", "uri", "ref_id", "pattern", "q", "id"];
+  for (const key of preferredKeys) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) {
+      return `Tool call: ${name} — ${key}=${truncateForActivity(value, 80)}`;
+    }
+    if (typeof value === "number") {
+      return `Tool call: ${name} — ${key}=${value}`;
+    }
+  }
+
+  return `Tool call: ${name}`;
+};
+
+const summarizeFunctionOutput = (name: string, outputRaw: unknown): string => {
+  if (typeof outputRaw === "string") {
+    const exitMatch = outputRaw.match(/Exit code:\s*(-?\d+)/i);
+    if (exitMatch) {
+      return `Tool output: ${name} (exit ${exitMatch[1]})`;
+    }
+  }
+  return `Tool output: ${name}`;
+};
+
+const summarizeCodexEvent = (
+  row: any,
+  toolNameByCallId: Map<string, string>
+): ActivitySummary | null => {
   if (!row || typeof row !== "object") return null;
 
   if (row.type === "thread.started") return { code: "thread_started", text: "Thread started" };
@@ -60,6 +113,25 @@ const summarizeCodexEvent = (row: any): ActivitySummary | null => {
     const item = row.item ?? row.payload ?? {};
     const kind = String(item?.type ?? "").trim();
     if (!kind || kind === "agent_message" || kind === "reasoning") return null;
+
+    if (kind === "command_execution") {
+      const command = typeof item?.command === "string" ? truncateForActivity(item.command, 120) : "";
+      const exitCode =
+        typeof item?.exit_code === "number" ? ` (exit ${item.exit_code})` : "";
+      if (row.type === "item.started") {
+        return {
+          code: "item_started",
+          text: command ? `Run: ${command}` : "Start: command_execution",
+        };
+      }
+      return {
+        code: "item_completed",
+        text: command
+          ? `Done: ${command}${exitCode}`
+          : `Done: command_execution${exitCode}`,
+      };
+    }
+
     const label =
       String(item?.name ?? item?.tool_name ?? kind)
         .replace(/[^\w.\-:/ ]/g, "")
@@ -82,11 +154,23 @@ const summarizeCodexEvent = (row: any): ActivitySummary | null => {
     const kind = String(payload?.type ?? "").trim();
     if (kind === "function_call") {
       const name = String(payload?.name ?? payload?.function?.name ?? "tool").trim();
-      return { code: "tool_call", text: `Tool call: ${name || "tool"}` };
+      const callId = String(payload?.call_id ?? "").trim();
+      if (callId && name) {
+        toolNameByCallId.set(callId, name);
+      }
+      return {
+        code: "tool_call",
+        text: summarizeFunctionCall(name || "tool", payload?.arguments),
+      };
     }
     if (kind === "function_call_output") {
-      const name = String(payload?.name ?? payload?.function?.name ?? "tool").trim();
-      return { code: "tool_output", text: `Tool output: ${name || "tool"}` };
+      const callId = String(payload?.call_id ?? "").trim();
+      const resolved = callId ? toolNameByCallId.get(callId) : null;
+      const name = String(payload?.name ?? payload?.function?.name ?? resolved ?? "tool").trim();
+      return {
+        code: "tool_output",
+        text: summarizeFunctionOutput(name || "tool", payload?.output),
+      };
     }
   }
 
@@ -256,6 +340,7 @@ app.post("/api/chat/stream", async (c) => {
       }
 
       const encoder = new TextEncoder();
+      const toolNameByCallId = new Map<string, string>();
       const push = (event: Record<string, unknown>) => {
         controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       };
@@ -344,7 +429,7 @@ app.post("/api/chat/stream", async (c) => {
                 continue;
               }
 
-              const activity = summarizeCodexEvent(row);
+              const activity = summarizeCodexEvent(row, toolNameByCallId);
               if (activity) {
                 push({ type: "activity", code: activity.code, text: activity.text });
               }
