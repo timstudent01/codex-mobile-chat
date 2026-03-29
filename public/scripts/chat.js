@@ -620,6 +620,32 @@
         return STATUS_ZH[raw] || raw;
       }
 
+      function formatActivityEvent(event) {
+        const rawText = String(event?.text || "").trim();
+        const code = String(event?.code || "").trim();
+        if (!rawText) return "";
+        if (currentLang === "en" || !code) return rawText;
+
+        const CODE_ZH = {
+          thread_started: "對話已建立",
+          turn_started: "回合開始",
+          turn_completed: "回合完成",
+          item_started: "步驟開始",
+          item_completed: "步驟完成",
+          tool_call: "工具呼叫",
+          tool_output: "工具回傳",
+          reasoning_update: "推理更新",
+          error_event: "錯誤事件",
+        };
+        const label = CODE_ZH[code] || rawText;
+        const colonIndex = rawText.indexOf(":");
+        if (colonIndex > -1) {
+          const detail = rawText.slice(colonIndex + 1).trim();
+          if (detail) return `${label}：${detail}`;
+        }
+        return label;
+      }
+
       function renderUsage(stats) {
         if (!stats) {
           usageContext.textContent = t("usageContextEmpty");
@@ -882,7 +908,7 @@
               }
               if (event.type === "activity") {
                 gotStreamEvent = true;
-                const text = String(event.text || "").trim();
+                const text = formatActivityEvent(event);
                 if (text) addActivity(text);
                 continue;
               }

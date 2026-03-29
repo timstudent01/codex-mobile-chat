@@ -44,12 +44,17 @@ const normalizeRequestedModel = (value: unknown): string | null => {
   return normalized;
 };
 
-const summarizeCodexEvent = (row: any): string | null => {
+type ActivitySummary = {
+  code: string;
+  text: string;
+};
+
+const summarizeCodexEvent = (row: any): ActivitySummary | null => {
   if (!row || typeof row !== "object") return null;
 
-  if (row.type === "thread.started") return "Thread started";
-  if (row.type === "turn.started") return "Turn started";
-  if (row.type === "turn.completed") return "Turn completed";
+  if (row.type === "thread.started") return { code: "thread_started", text: "Thread started" };
+  if (row.type === "turn.started") return { code: "turn_started", text: "Turn started" };
+  if (row.type === "turn.completed") return { code: "turn_completed", text: "Turn completed" };
 
   if (row.type === "item.started" || row.type === "item.completed") {
     const item = row.item ?? row.payload ?? {};
@@ -59,7 +64,17 @@ const summarizeCodexEvent = (row: any): string | null => {
       String(item?.name ?? item?.tool_name ?? kind)
         .replace(/[^\w.\-:/ ]/g, "")
         .trim() || kind;
-    return `${row.type === "item.started" ? "Start" : "Done"}: ${label}`;
+    return {
+      code: row.type === "item.started" ? "item_started" : "item_completed",
+      text: `${row.type === "item.started" ? "Start" : "Done"}: ${label}`,
+    };
+  }
+
+  if (row.type === "event_msg") {
+    const payloadType = String(row?.payload?.type ?? "").trim();
+    if (payloadType === "reasoning") {
+      return { code: "reasoning_update", text: "Reasoning update" };
+    }
   }
 
   if (row.type === "response_item") {
@@ -67,15 +82,15 @@ const summarizeCodexEvent = (row: any): string | null => {
     const kind = String(payload?.type ?? "").trim();
     if (kind === "function_call") {
       const name = String(payload?.name ?? payload?.function?.name ?? "tool").trim();
-      return `Tool call: ${name || "tool"}`;
+      return { code: "tool_call", text: `Tool call: ${name || "tool"}` };
     }
     if (kind === "function_call_output") {
       const name = String(payload?.name ?? payload?.function?.name ?? "tool").trim();
-      return `Tool output: ${name || "tool"}`;
+      return { code: "tool_output", text: `Tool output: ${name || "tool"}` };
     }
   }
 
-  if (row.type === "error") return "Error event";
+  if (row.type === "error") return { code: "error_event", text: "Error event" };
   return null;
 };
 
@@ -329,9 +344,9 @@ app.post("/api/chat/stream", async (c) => {
                 continue;
               }
 
-              const activityText = summarizeCodexEvent(row);
-              if (activityText) {
-                push({ type: "activity", text: activityText });
+              const activity = summarizeCodexEvent(row);
+              if (activity) {
+                push({ type: "activity", code: activity.code, text: activity.text });
               }
 
               if (row?.type === "thread.started" && typeof row.thread_id === "string") {
