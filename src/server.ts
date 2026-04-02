@@ -16,17 +16,36 @@ const activeSessionRuns = new Map<string, number>();
 let activeRunCount = 0;
 const ERROR_LOG_PATH = "./logs/error.log";
 const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
+const PREFERRED_DEFAULT_MODEL = "gpt-5.3-codex";
 const AVAILABLE_MODELS = [
-  "gpt-5.4",
-  "gpt-5.4-mini",
+  "gpt-5.2",
   "gpt-5.3-codex",
   "gpt-5.2-codex",
-  "gpt-5.2",
+  "gpt-5.4-mini",
+  "gpt-5.4",
   "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
 ];
+const MODEL_PROBE_PROMPT = "Reply with exactly OK.";
+const MODEL_DISCOVERY_TTL_MS = 5 * 60 * 1000;
+const MODEL_PROBE_TIMEOUT_MS = 8 * 1000;
+const MODEL_LIST_TIMEOUT_MS = 3 * 1000;
 
 type ErrorLogMeta = Record<string, unknown>;
+type ModelProbeCache = {
+  at: number;
+  models: string[];
+  source: "codex-model" | "probe" | "fallback";
+};
+
+let modelProbeCache: ModelProbeCache | null = null;
+let backgroundModelRefreshPromise: Promise<void> | null = null;
+
+const pickDefaultModel = (models: string[]): string | null => {
+  if (!Array.isArray(models) || models.length === 0) return null;
+  if (models.includes(PREFERRED_DEFAULT_MODEL)) return PREFERRED_DEFAULT_MODEL;
+  return models[0] ?? null;
+};
 
 const toErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -42,6 +61,219 @@ const normalizeRequestedModel = (value: unknown): string | null => {
     throw new Error("Invalid model");
   }
   return normalized;
+};
+
+const withTimeout = async <T>(
+  promiseFactory: () => Promise<T>,
+  timeoutMs: number
+): Promise<T> => {
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+    void promiseFactory()
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+};
+
+const probeSingleModel = async (model: string): Promise<boolean> => {
+  let proc: any = null;
+  try {
+    const ok = await withTimeout(async () => {
+      proc = Bun.spawn(
+        ["codex", "exec", "-m", model, "-s", "danger-full-access", "--skip-git-repo-check", "--json", "-"],
+        {
+          cwd: process.cwd(),
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        }
+      );
+
+      if (proc.stdin && typeof proc.stdin !== "number") {
+        proc.stdin.write(`${MODEL_PROBE_PROMPT}\n`);
+        proc.stdin.end();
+      }
+
+      let sawTurnCompleted = false;
+      const reader = proc.stdout && typeof proc.stdout !== "number" ? proc.stdout.getReader() : null;
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let row: any;
+            try {
+              row = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            if (row?.type === "turn.completed") {
+              sawTurnCompleted = true;
+            }
+          }
+        }
+      }
+
+      const exitCode = await proc.exited;
+      return exitCode === 0 && sawTurnCompleted;
+    }, MODEL_PROBE_TIMEOUT_MS);
+
+    return ok;
+  } catch {
+    return false;
+  } finally {
+    if (proc) {
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
+    }
+  }
+};
+
+const discoverAccessibleModels = async (): Promise<string[]> => {
+  const checks = await Promise.all(
+    AVAILABLE_MODELS.map(async (model) => ({ model, ok: await probeSingleModel(model) }))
+  );
+  const models = checks.filter((item) => item.ok).map((item) => item.model);
+  return models.length > 0 ? models : AVAILABLE_MODELS;
+};
+
+const parseModelsFromText = (raw: string): string[] => {
+  if (!raw) return [];
+  const found = new Set<string>();
+  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const firstToken = line.split(/\s+/)[0]?.trim();
+    if (!firstToken) continue;
+    if (!MODEL_PATTERN.test(firstToken)) continue;
+    found.add(firstToken);
+  }
+  return Array.from(found).filter((model) => AVAILABLE_MODELS.includes(model));
+};
+
+const tryListModelsViaCodexCommand = async (): Promise<string[]> => {
+  let proc: any = null;
+  try {
+    return await withTimeout(async () => {
+      proc = Bun.spawn(["codex", "model"], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const stdoutReader = proc.stdout && typeof proc.stdout !== "number" ? proc.stdout.getReader() : null;
+      const stderrReader = proc.stderr && typeof proc.stderr !== "number" ? proc.stderr.getReader() : null;
+      const decoder = new TextDecoder();
+
+      let stdoutText = "";
+      let stderrText = "";
+
+      if (stdoutReader) {
+        while (true) {
+          const { done, value } = await stdoutReader.read();
+          if (done) break;
+          stdoutText += decoder.decode(value, { stream: true });
+        }
+      }
+      if (stderrReader) {
+        while (true) {
+          const { done, value } = await stderrReader.read();
+          if (done) break;
+          stderrText += decoder.decode(value, { stream: true });
+        }
+      }
+
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) return [];
+      return parseModelsFromText(`${stdoutText}\n${stderrText}`);
+    }, MODEL_LIST_TIMEOUT_MS);
+  } catch {
+    return [];
+  } finally {
+    if (proc) {
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
+    }
+  }
+};
+
+const getAccessibleModels = async (forceRefresh = false): Promise<ModelProbeCache> => {
+  if (!forceRefresh && modelProbeCache && Date.now() - modelProbeCache.at < MODEL_DISCOVERY_TTL_MS) {
+    return modelProbeCache;
+  }
+
+  const fromCodexModel = await tryListModelsViaCodexCommand();
+  if (fromCodexModel.length > 0) {
+    modelProbeCache = {
+      at: Date.now(),
+      models: fromCodexModel,
+      source: "codex-model",
+    };
+    return modelProbeCache;
+  }
+
+  if (!forceRefresh) {
+    if (!modelProbeCache) {
+      modelProbeCache = {
+        at: Date.now(),
+        models: AVAILABLE_MODELS,
+        source: "fallback",
+      };
+    }
+    if (!backgroundModelRefreshPromise) {
+      backgroundModelRefreshPromise = (async () => {
+        try {
+          const probed = await discoverAccessibleModels();
+          if (probed.length > 0) {
+            modelProbeCache = {
+              at: Date.now(),
+              models: probed,
+              source: "probe",
+            };
+          }
+        } finally {
+          backgroundModelRefreshPromise = null;
+        }
+      })();
+    }
+    return modelProbeCache;
+  }
+
+  const probed = await discoverAccessibleModels();
+  if (probed.length > 0) {
+    modelProbeCache = {
+      at: Date.now(),
+      models: probed,
+      source: "probe",
+    };
+    return modelProbeCache;
+  }
+
+  modelProbeCache = {
+    at: Date.now(),
+    models: AVAILABLE_MODELS,
+    source: "fallback",
+  };
+  return modelProbeCache;
 };
 
 type ActivitySummary = {
@@ -174,8 +406,199 @@ const summarizeCodexEvent = (
     }
   }
 
-  if (row.type === "error") return { code: "error_event", text: "Error event" };
+  if (row.type === "error") {
+    const message =
+      typeof row?.message === "string"
+        ? row.message.trim()
+        : typeof row?.error?.message === "string"
+          ? row.error.message.trim()
+          : "";
+    if (!message) return null;
+    return { code: "error_event", text: `Error: ${truncateForActivity(message, 220)}` };
+  }
   return null;
+};
+
+const extractTextFromContentPart = (part: any): string => {
+  if (!part) return "";
+  if (typeof part === "string") return part;
+  if (typeof part.text === "string") return part.text;
+  if (typeof part.output_text === "string") return part.output_text;
+  if (typeof part.delta === "string") return part.delta;
+  if (typeof part.value === "string") return part.value;
+  if (typeof part.content === "string") return part.content;
+  if (typeof part.message === "string") return part.message;
+  return "";
+};
+
+const collectAssistantTextsFromRow = (row: any): string[] => {
+  if (!row || typeof row !== "object") return [];
+  const results: string[] = [];
+
+  const pushIfText = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) {
+      results.push(value);
+    }
+  };
+
+  const pushFromContentArray = (content: unknown) => {
+    if (!Array.isArray(content)) return;
+    for (const part of content) {
+      const text = extractTextFromContentPart(part);
+      if (text.trim()) results.push(text);
+    }
+  };
+
+  const rowType = String(row.type ?? "").trim();
+
+  if (rowType === "item.completed" || rowType === "item.updated" || rowType === "item.delta") {
+    const item = row.item ?? row.payload ?? {};
+    const itemType = String(item?.type ?? "").trim();
+    const role = String(item?.role ?? "").trim();
+    const isAssistantish =
+      itemType === "agent_message" ||
+      itemType === "assistant_message" ||
+      (itemType === "message" && role === "assistant");
+
+    if (isAssistantish) {
+      pushIfText(item?.text);
+      pushIfText(item?.delta);
+      pushIfText(item?.text_delta);
+      pushIfText(item?.message);
+      pushFromContentArray(item?.content);
+    }
+  }
+
+  if (rowType === "response_item") {
+    const payload = row.payload ?? {};
+    const payloadType = String(payload?.type ?? "").trim();
+    const role = String(payload?.role ?? "").trim();
+
+    if (payloadType === "message" && role === "assistant") {
+      pushIfText(payload?.text);
+      pushIfText(payload?.delta);
+      pushFromContentArray(payload?.content);
+    }
+
+    if (
+      payloadType === "assistant_message" ||
+      payloadType === "assistant_message_delta" ||
+      payloadType === "output_text" ||
+      payloadType === "output_text_delta"
+    ) {
+      pushIfText(payload?.text);
+      pushIfText(payload?.delta);
+      pushIfText(payload?.output_text);
+      pushFromContentArray(payload?.content);
+    }
+  }
+
+  if (rowType === "event_msg") {
+    const payload = row.payload ?? {};
+    const payloadType = String(payload?.type ?? "").trim();
+    if (
+      payloadType === "assistant_message" ||
+      payloadType === "assistant_message_delta" ||
+      payloadType === "agent_message" ||
+      payloadType === "agent_message_delta"
+    ) {
+      pushIfText(payload?.text);
+      pushIfText(payload?.delta);
+      pushFromContentArray(payload?.content);
+    }
+  }
+
+  return results;
+};
+
+const collectAssistantPhaseFromRow = (row: any): string => {
+  if (!row || typeof row !== "object") return "";
+  const normalize = (value: unknown): string => {
+    if (typeof value !== "string") return "";
+    return value.trim();
+  };
+
+  const rowType = String(row.type ?? "").trim();
+
+  if (rowType === "item.completed" || rowType === "item.updated" || rowType === "item.delta") {
+    const item = row.item ?? row.payload ?? {};
+    const itemType = String(item?.type ?? "").trim();
+    const role = String(item?.role ?? "").trim();
+    const isAssistantish =
+      itemType === "agent_message" ||
+      itemType === "assistant_message" ||
+      (itemType === "message" && role === "assistant");
+    if (isAssistantish) return normalize(item?.phase);
+  }
+
+  if (rowType === "response_item") {
+    const payload = row.payload ?? {};
+    const payloadType = String(payload?.type ?? "").trim();
+    const role = String(payload?.role ?? "").trim();
+
+    if (payloadType === "message" && role === "assistant") {
+      return normalize(payload?.phase);
+    }
+
+    if (
+      payloadType === "assistant_message" ||
+      payloadType === "assistant_message_delta" ||
+      payloadType === "output_text" ||
+      payloadType === "output_text_delta"
+    ) {
+      return normalize(payload?.phase);
+    }
+  }
+
+  if (rowType === "event_msg") {
+    const payload = row.payload ?? {};
+    const payloadType = String(payload?.type ?? "").trim();
+    if (
+      payloadType === "assistant_message" ||
+      payloadType === "assistant_message_delta" ||
+      payloadType === "agent_message" ||
+      payloadType === "agent_message_delta"
+    ) {
+      return normalize(payload?.phase);
+    }
+  }
+
+  return "";
+};
+
+const isAssistantBoundaryRow = (row: any): boolean => {
+  if (!row || typeof row !== "object") return false;
+  const rowType = String(row.type ?? "").trim();
+
+  if (rowType === "item.completed") {
+    const item = row.item ?? row.payload ?? {};
+    const itemType = String(item?.type ?? "").trim();
+    const role = String(item?.role ?? "").trim();
+    return (
+      itemType === "agent_message" ||
+      itemType === "assistant_message" ||
+      (itemType === "message" && role === "assistant")
+    );
+  }
+
+  if (rowType === "response_item") {
+    const payload = row.payload ?? {};
+    const payloadType = String(payload?.type ?? "").trim();
+    const role = String(payload?.role ?? "").trim();
+    return (
+      (payloadType === "message" && role === "assistant") ||
+      payloadType === "assistant_message" ||
+      payloadType === "output_text"
+    );
+  }
+
+  if (rowType === "event_msg") {
+    const payload = row.payload ?? {};
+    const payloadType = String(payload?.type ?? "").trim();
+    return payloadType === "assistant_message" || payloadType === "agent_message";
+  }
+
+  return false;
 };
 
 async function logError(scope: string, error: unknown, meta: ErrorLogMeta = {}) {
@@ -226,11 +649,27 @@ app.get("/api/sessions", async (c) => {
   return c.json({ sessions });
 });
 
-app.get("/api/models", (c) => {
-  return c.json({
-    models: AVAILABLE_MODELS.map((model) => ({ value: model, label: model })),
-    defaultModel: AVAILABLE_MODELS[0] ?? null,
-  });
+app.get("/api/models", async (c) => {
+  try {
+    const forceRefresh = c.req.query("refresh") === "1";
+    const resolved = await getAccessibleModels(forceRefresh);
+    return c.json({
+      models: resolved.models.map((model) => ({ value: model, label: model })),
+      defaultModel: pickDefaultModel(resolved.models),
+      source: resolved.source,
+      cachedAt: resolved.at,
+    });
+  } catch (error) {
+    await logError("GET /api/models", error, {
+      method: c.req.method,
+      path: c.req.path,
+    });
+    return c.json({
+      models: AVAILABLE_MODELS.map((model) => ({ value: model, label: model })),
+      defaultModel: pickDefaultModel(AVAILABLE_MODELS),
+      source: "fallback",
+    });
+  }
 });
 
 app.get("/api/sessions/:sessionId/messages", async (c) => {
@@ -334,6 +773,9 @@ app.post("/api/chat/stream", async (c) => {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       activeRunCount += 1;
+      let streamClosed = false;
+      let proc: Bun.Subprocess | null = null;
+      let procExited = false;
       let trackedSessionId = normalizedSessionId || "";
       if (trackedSessionId) {
         markSessionStart(trackedSessionId);
@@ -341,8 +783,17 @@ app.post("/api/chat/stream", async (c) => {
 
       const encoder = new TextEncoder();
       const toolNameByCallId = new Map<string, string>();
+      let lastCodexErrorMessage = "";
+      let lastAssistantPhase = "";
       const push = (event: Record<string, unknown>) => {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        if (streamClosed) return false;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+          return true;
+        } catch {
+          streamClosed = true;
+          return false;
+        }
       };
       const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
       const pushAssistantChunked = async (text: string) => {
@@ -392,7 +843,7 @@ app.post("/api/chat/stream", async (c) => {
           args.push("-s", "danger-full-access", "--skip-git-repo-check", "--json", "-");
         }
 
-        const proc = Bun.spawn(args, {
+        proc = Bun.spawn(args, {
           cwd,
           stdin: "pipe",
           stdout: "pipe",
@@ -429,9 +880,27 @@ app.post("/api/chat/stream", async (c) => {
                 continue;
               }
 
+              if (row?.type === "error") {
+                const message =
+                  typeof row?.message === "string"
+                    ? row.message.trim()
+                    : typeof row?.error?.message === "string"
+                      ? row.error.message.trim()
+                      : "";
+                if (message) {
+                  lastCodexErrorMessage = message;
+                }
+              }
+
               const activity = summarizeCodexEvent(row, toolNameByCallId);
               if (activity) {
                 push({ type: "activity", code: activity.code, text: activity.text });
+              }
+
+              const assistantPhase = collectAssistantPhaseFromRow(row);
+              if (assistantPhase && assistantPhase !== lastAssistantPhase) {
+                lastAssistantPhase = assistantPhase;
+                push({ type: "assistant_phase", phase: assistantPhase });
               }
 
               if (row?.type === "thread.started" && typeof row.thread_id === "string") {
@@ -448,26 +917,15 @@ app.post("/api/chat/stream", async (c) => {
                 continue;
               }
 
-              if (row?.type === "item.completed" && row?.item?.type === "agent_message") {
-                await pushAssistantChunked(String(row.item.text ?? ""));
-                continue;
-              }
-
-              if (row?.type === "response_item") {
-                const payload = row.payload;
-                if (
-                  payload?.type === "message" &&
-                  payload?.role === "assistant" &&
-                  Array.isArray(payload.content)
-                ) {
-                  const text = payload.content
-                    .map((p: any) => (typeof p?.text === "string" ? p.text : ""))
-                    .join("\n\n")
-                    .trim();
-                  if (text) {
-                    await pushAssistantChunked(text);
-                  }
+              const assistantTexts = collectAssistantTextsFromRow(row);
+              if (assistantTexts.length > 0) {
+                if (isAssistantBoundaryRow(row)) {
+                  push({ type: "assistant_boundary" });
                 }
+                for (const text of assistantTexts) {
+                  await pushAssistantChunked(text);
+                }
+                continue;
               }
             }
           }
@@ -485,15 +943,20 @@ app.post("/api/chat/stream", async (c) => {
         }
 
         const exitCode = await proc.exited;
+        procExited = true;
         if (exitCode !== 0) {
           await logError("POST /api/chat/stream codex exited", new Error("codex non-zero exit"), {
             exitCode,
             sessionId: trackedSessionId || normalizedSessionId || null,
             stderr: stderrText.trim(),
+            lastCodexErrorMessage: lastCodexErrorMessage || null,
           });
           push({
             type: "error",
-            message: stderrText.trim() || `codex exited with code ${exitCode}`,
+            message:
+              lastCodexErrorMessage ||
+              stderrText.trim() ||
+              `codex exited with code ${exitCode}`,
           });
         }
 
@@ -514,8 +977,24 @@ app.post("/api/chat/stream", async (c) => {
         if (trackedSessionId) {
           markSessionDone(trackedSessionId);
         }
-        controller.close();
+        if (proc && !procExited) {
+          try {
+            proc.kill();
+          } catch {
+            // ignore kill errors during disconnect/teardown
+          }
+        }
+        if (!streamClosed) {
+          try {
+            controller.close();
+          } catch {
+            // already closed by runtime/client disconnect
+          }
+        }
       }
+    },
+    cancel() {
+      // Reader side is gone; let push() become no-op through enqueue failures.
     },
   });
 

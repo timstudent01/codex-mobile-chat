@@ -32,6 +32,9 @@
       const activityPanel = document.getElementById("activityPanel");
       const scrollToBottomBtn = document.getElementById("scrollToBottomBtn");
       const bottomComposer = document.querySelector(".bottom");
+      const modelLoadingMask = document.getElementById("modelLoadingMask");
+      const modelLoadingTitle = document.getElementById("modelLoadingTitle");
+      const modelLoadingSub = document.getElementById("modelLoadingSub");
 
       const params = new URLSearchParams(window.location.search);
       let selectedSessionId = params.get("sessionId");
@@ -47,6 +50,8 @@
       const activityEvents = [];
       let uploadedImages = [];
       let activityBubbleTimer = null;
+      let liveStreamState = null;
+      let modelLoadingFailed = false;
 
       function normalizeModelValue(value) {
         if (typeof value !== "string") return "";
@@ -138,6 +143,9 @@
           usageContextWithPercent: (r, t, p) => `Ctx ${r} / ${t} (${p} left)`,
           usage5h: (v) => `5h left ${v}`,
           usageWeek: (v) => `Week left ${v}`,
+          loadingModelsTitle: "Loading model list...",
+          loadingModelsSub: "Fetching available models from Codex",
+          loadingModelsFail: "Failed to load models. Please refresh.",
         },
         zh: {
           title: "Codex 對話",
@@ -172,9 +180,24 @@
           usageContextWithPercent: (r, t, p) => `上下文 ${r} / ${t}（剩餘 ${p}）`,
           usage5h: (v) => `5小時剩餘 ${v}`,
           usageWeek: (v) => `一週剩餘 ${v}`,
+          loadingModelsTitle: "讀取模型列表中...",
+          loadingModelsSub: "正在透過 Codex 取得可用模型",
+          loadingModelsFail: "模型列表讀取失敗，請重新整理頁面",
         },
       };
       const t = (key) => I18N[currentLang][key];
+
+      function setModelLoadingMask(open, failed = false) {
+        if (!modelLoadingMask) return;
+        modelLoadingFailed = failed;
+        if (modelLoadingTitle) {
+          modelLoadingTitle.textContent = modelLoadingFailed ? t("loadingModelsFail") : t("loadingModelsTitle");
+        }
+        if (modelLoadingSub) {
+          modelLoadingSub.textContent = t("loadingModelsSub");
+        }
+        modelLoadingMask.classList.toggle("open", Boolean(open));
+      }
 
             function getGlossaryHtml() {
         if (currentLang === "en") {
@@ -256,6 +279,253 @@
         activityBubble.classList.remove("open");
       }
 
+      function resetLiveStream() {
+        liveStreamState = null;
+      }
+
+      function initLiveStream() {
+        const contentEl = streamingAssistantBubble?.querySelector(".message-content");
+        if (!(contentEl instanceof HTMLElement)) return;
+
+        liveStreamState = {
+          assistantContentEl: contentEl,
+          commandStarts: new Map(),
+          streamStartedAt: Date.now(),
+          commandLogs: [],
+          commandSeq: 0,
+          seenDoneKeys: new Set(),
+          textBuffer: "",
+          hasRealAssistantText: false,
+          currentAssistantBubble: streamingAssistantBubble,
+          currentAssistantPhase: "",
+          splitReconciled: false,
+          bubbleCommandState: new WeakMap(),
+        };
+
+        contentEl.textContent = t("thinkingWord");
+      }
+
+      function appendStreamNote(chunkText) {
+        const normalized = String(chunkText || "");
+        if (!normalized || !liveStreamState) return;
+
+        if (!(liveStreamState.assistantContentEl instanceof HTMLElement)) return;
+        liveStreamState.textBuffer = `${liveStreamState.textBuffer || ""}${normalized}`;
+        const compact = liveStreamState.textBuffer.trim();
+        if (compact) {
+          liveStreamState.hasRealAssistantText = true;
+          liveStreamState.assistantContentEl.textContent = compact;
+        } else if (!liveStreamState.hasRealAssistantText) {
+          liveStreamState.assistantContentEl.textContent = t("thinkingWord");
+        }
+      }
+
+      function setBubbleMetaText(bubbleEl, text) {
+        if (!(bubbleEl instanceof HTMLElement)) return;
+        const metaEl = bubbleEl.querySelector(".meta");
+        if (!(metaEl instanceof HTMLElement)) return;
+        metaEl.textContent = text;
+      }
+
+      function updateLiveAssistantPhase(phase) {
+        const normalized = String(phase || "").trim();
+        if (!normalized || !liveStreamState) return;
+        if (normalized === liveStreamState.currentAssistantPhase) return;
+
+        const phaseLabel = localizePhase(normalized) || normalized;
+        const nextMeta = `${t("roleAssistant")} · ${phaseLabel}`;
+        const activeBubble = liveStreamState.currentAssistantBubble;
+
+        if (
+          activeBubble instanceof HTMLElement &&
+          !liveStreamState.hasRealAssistantText &&
+          !String(liveStreamState.textBuffer || "").trim()
+        ) {
+          setBubbleMetaText(activeBubble, nextMeta);
+          liveStreamState.currentAssistantPhase = normalized;
+          return;
+        }
+
+        const bubble = appendMessage("assistant", t("thinkingWord"), nextMeta);
+        const nextContentEl = bubble?.querySelector(".message-content");
+        if (!(nextContentEl instanceof HTMLElement)) return;
+
+        liveStreamState.currentAssistantBubble = bubble;
+        liveStreamState.assistantContentEl = nextContentEl;
+        liveStreamState.textBuffer = "";
+        liveStreamState.hasRealAssistantText = false;
+        liveStreamState.currentAssistantPhase = normalized;
+      }
+
+      function splitLiveAssistantBubble(forcePhase = "") {
+        if (!liveStreamState) return;
+        const currentBubble = liveStreamState.currentAssistantBubble;
+        if (!(currentBubble instanceof HTMLElement)) return;
+        const hasText =
+          liveStreamState.hasRealAssistantText || Boolean(String(liveStreamState.textBuffer || "").trim());
+        if (!hasText) return;
+
+        const normalized = String(forcePhase || liveStreamState.currentAssistantPhase || "").trim();
+        const phaseLabel = normalized ? localizePhase(normalized) || normalized : "";
+        const metaText = `${t("roleAssistant")}${phaseLabel ? ` · ${phaseLabel}` : ""}`;
+        const bubble = appendMessage("assistant", t("thinkingWord"), metaText);
+        const nextContentEl = bubble?.querySelector(".message-content");
+        if (!(nextContentEl instanceof HTMLElement)) return;
+
+        liveStreamState.currentAssistantBubble = bubble;
+        liveStreamState.assistantContentEl = nextContentEl;
+        liveStreamState.textBuffer = "";
+        liveStreamState.hasRealAssistantText = false;
+      }
+
+      function formatRunLine(raw) {
+        const text = String(raw || "").trim();
+        if (!text) return "";
+
+        if (/^Run:/i.test(text)) {
+          const command = text.replace(/^Run:\s*/i, "").trim();
+          if (!command) return "";
+          liveStreamState?.commandStarts.set(command, Date.now());
+          return currentLang === "en" ? `Executed ${command}` : `已執行 ${command}`;
+        }
+
+        if (/^Done:/i.test(text)) {
+          const command = text.replace(/^Done:\s*/i, "").trim();
+          const startedAt = liveStreamState?.commandStarts.get(command);
+          if (startedAt) liveStreamState?.commandStarts.delete(command);
+          const seconds = startedAt
+            ? Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+            : null;
+          if (currentLang === "en") {
+            return seconds ? `Executed ${command} in ${seconds}s` : `Executed ${command}`;
+          }
+          return seconds ? `已執行 ${command}，適用於 ${seconds}s` : `已執行 ${command}`;
+        }
+
+        return text;
+      }
+
+      function setSummaryButtonText(summaryBtn, text) {
+        if (!(summaryBtn instanceof HTMLElement)) return;
+        summaryBtn.textContent = "";
+        const label = document.createElement("span");
+        label.className = "stream-bubble-summary-label";
+        label.textContent = String(text || "");
+        summaryBtn.appendChild(label);
+      }
+
+      function appendStreamActivity(text) {
+        const normalized = String(text || "").trim();
+        if (!normalized || !liveStreamState) return;
+
+        const isRun = /^Run:/i.test(normalized);
+        const isDone = /^Done:/i.test(normalized);
+        const isShellTool = /^Tool call:\s*shell_command/i.test(normalized);
+        if (!isRun && !isDone && !isShellTool) return;
+
+        const rendered = formatRunLine(normalized);
+        if (!rendered) return;
+
+        const targetBubble = liveStreamState.currentAssistantBubble;
+        if (!(targetBubble instanceof HTMLElement)) return;
+
+        const rowEl = targetBubble.closest(".row.assistant");
+        if (!(rowEl instanceof HTMLElement)) return;
+
+        let commandState = liveStreamState.bubbleCommandState.get(targetBubble);
+        if (!commandState) {
+          const summaryBtn = document.createElement("button");
+          summaryBtn.type = "button";
+          summaryBtn.className = "stream-bubble-summary";
+          summaryBtn.style.display = "none";
+
+          const listEl = document.createElement("div");
+          listEl.className = "stream-bubble-command-list";
+
+          rowEl.insertBefore(summaryBtn, targetBubble);
+          rowEl.appendChild(listEl);
+
+          commandState = {
+            summaryBtn,
+            listEl,
+            logs: [],
+            startedAt: Date.now(),
+            endedAt: null,
+            expanded: true,
+          };
+
+          summaryBtn.addEventListener("click", () => {
+            commandState.expanded = !commandState.expanded;
+            listEl.classList.toggle("open", commandState.expanded);
+            if (rowEl.classList.contains("assistant-process")) {
+              rowEl.classList.toggle("open", commandState.expanded);
+            }
+            const elapsed = commandState.endedAt
+              ? Math.max(1, Math.round((commandState.endedAt - commandState.startedAt) / 1000))
+              : Math.max(1, Math.round((Date.now() - commandState.startedAt) / 1000));
+            const arrow = commandState.expanded ? "v" : ">";
+            setSummaryButtonText(
+              summaryBtn,
+              currentLang === "en" ? `Applied in ${elapsed}s ${arrow}` : `適用於 ${elapsed}s ${arrow}`
+            );
+          });
+
+          liveStreamState.bubbleCommandState.set(targetBubble, commandState);
+          if (rowEl.classList.contains("assistant-process")) {
+            rowEl.classList.add("has-stream-summary");
+          }
+        }
+
+        if (isDone) {
+          const key = normalized.toLowerCase();
+          if (liveStreamState.seenDoneKeys.has(key)) return;
+          liveStreamState.seenDoneKeys.add(key);
+        }
+
+        liveStreamState.commandSeq += 1;
+        liveStreamState.commandLogs.push({
+          seq: liveStreamState.commandSeq,
+          raw: normalized,
+          rendered,
+        });
+
+        const line = document.createElement("div");
+        line.className = "stream-bubble-command-line";
+        line.textContent = rendered;
+        commandState.logs.push(rendered);
+        commandState.listEl.appendChild(line);
+        commandState.listEl.classList.add("open");
+
+        chat.scrollTop = chat.scrollHeight;
+        updateScrollToBottomButton();
+      }
+
+      function collapseCommandLogs() {
+        if (!liveStreamState?.bubbleCommandState) return;
+        const checked = new Set();
+        const collect = chat.querySelectorAll(".row.assistant .bubble");
+        for (const bubble of collect) {
+          const bubbleEl = bubble;
+          if (!(bubbleEl instanceof HTMLElement) || checked.has(bubbleEl)) continue;
+          checked.add(bubbleEl);
+          const state = liveStreamState.bubbleCommandState.get(bubbleEl);
+          if (!state || !state.logs.length) continue;
+
+          state.endedAt = Date.now();
+          const elapsedSec = Math.max(1, Math.round((state.endedAt - state.startedAt) / 1000));
+          state.expanded = false;
+          state.summaryBtn.style.display = "block";
+          const rowEl = state.summaryBtn.closest(".row.assistant");
+          if (rowEl instanceof HTMLElement && rowEl.classList.contains("assistant-process")) {
+            rowEl.classList.remove("open");
+          }
+          setSummaryButtonText(
+            state.summaryBtn,
+            currentLang === "en" ? `Applied in ${elapsedSec}s >` : `適用於 ${elapsedSec}s >`
+          );
+          state.listEl.classList.remove("open");
+        }
+      }
       function placeGlossaryPanel() {
         if (!glossaryPanel.classList.contains("open")) return;
 
@@ -335,6 +605,7 @@
         renderUsage(lastStats);
         placeGlossaryPanel();
         placeActivityPanel();
+        setModelLoadingMask(modelLoadingMask?.classList.contains("open"), modelLoadingFailed);
       }
 
       function escapeHtml(input) {
@@ -348,32 +619,65 @@
         return /^https?:\/\//i.test(url) || /^\/public\//i.test(url);
       }
 
-      function renderMessageHtml(text) {
-        const raw = String(text || "");
-        const imagePattern = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
-        let output = "";
-        let lastIndex = 0;
-        let matched = false;
+      function renderMarkdownToHtml(raw) {
+        const source = String(raw || "");
+        const markedApi = window.marked;
+        if (!markedApi || typeof markedApi.parse !== "function") {
+          return escapeHtml(source);
+        }
+        const parsed = markedApi.parse(source, {
+          gfm: true,
+          breaks: true,
+          mangle: false,
+          headerIds: false,
+        });
+        const purifier = window.DOMPurify;
+        if (purifier && typeof purifier.sanitize === "function") {
+          return purifier.sanitize(parsed);
+        }
+        return parsed;
+      }
 
-        for (const match of raw.matchAll(imagePattern)) {
-          const index = match.index ?? 0;
-          const alt = match[1] || "image";
-          const url = match[2] || "";
-          output += escapeHtml(raw.slice(lastIndex, index));
-          if (isRenderableImageUrl(url)) {
-            output += `<div class="inline-image-wrap"><img class="inline-image" src="${escapeHtml(
-              url
-            )}" alt="${escapeHtml(alt)}" loading="lazy" /></div>`;
-            matched = true;
-          } else {
-            output += escapeHtml(match[0]);
+      function renderMessageHtml(text) {
+        const html = renderMarkdownToHtml(text);
+        const tpl = document.createElement("template");
+        tpl.innerHTML = html;
+
+        const images = tpl.content.querySelectorAll("img");
+        for (const img of images) {
+          const src = String(img.getAttribute("src") || "");
+          if (!isRenderableImageUrl(src)) {
+            const fallback = document.createTextNode(img.getAttribute("alt") || src);
+            img.replaceWith(fallback);
+            continue;
           }
-          lastIndex = index + match[0].length;
+          img.classList.add("inline-image");
+          img.setAttribute("loading", "lazy");
+          const wrap = document.createElement("div");
+          wrap.className = "inline-image-wrap";
+          img.replaceWith(wrap);
+          wrap.appendChild(img);
         }
 
-        output += escapeHtml(raw.slice(lastIndex));
-        if (!matched) return escapeHtml(raw);
-        return output;
+        const links = tpl.content.querySelectorAll("a[href]");
+        for (const link of links) {
+          link.setAttribute("target", "_blank");
+          link.setAttribute("rel", "noopener noreferrer");
+        }
+
+        const hljsApi = window.hljs;
+        if (hljsApi && typeof hljsApi.highlightElement === "function") {
+          const codeBlocks = tpl.content.querySelectorAll("pre code");
+          for (const block of codeBlocks) {
+            try {
+              hljsApi.highlightElement(block);
+            } catch {
+              // ignore highlight failures for unknown languages
+            }
+          }
+        }
+
+        return tpl.innerHTML;
       }
 
       function renderAttachments() {
@@ -532,13 +836,16 @@
         promptInput.style.overflowY = promptInput.scrollHeight > maxHeight ? "auto" : "hidden";
       }
 
-      function appendMessage(role, text, metaText = "") {
+      function appendMessage(role, text, metaText = "", phase = "") {
         if (chat.querySelector(".empty")) chat.innerHTML = "";
         const row = document.createElement("div");
         row.className = `row ${role}`;
+        if (role === "assistant" && phase) {
+          row.dataset.phase = String(phase);
+        }
         row.innerHTML = `
           <div class="bubble">
-            ${renderMessageHtml(text)}
+            <div class="message-content">${renderMessageHtml(text)}</div>
             <div class="meta">${escapeHtml(metaText)}</div>
           </div>
         `;
@@ -548,28 +855,199 @@
         return row.querySelector(".bubble");
       }
 
+      function createProcessBlock(text, metaText = "", open = false, phase = "") {
+        const row = document.createElement("div");
+        row.className = "row assistant assistant-process";
+        if (phase) row.dataset.phase = String(phase);
+        if (open) row.classList.add("open");
+        row.innerHTML = `
+          <button type="button" class="assistant-process-toggle">
+            <span class="assistant-process-meta">${escapeHtml(metaText)}</span>
+            <span class="assistant-process-arrow">${open ? "v" : ">"}</span>
+          </button>
+          <div class="assistant-process-body">${renderMessageHtml(text)}</div>
+        `;
+        chat.appendChild(row);
+        chat.scrollTop = chat.scrollHeight;
+        updateScrollToBottomButton();
+        return row;
+      }
+
+      function createAssistantPlainBlock(text, metaText = "", phase = "") {
+        const row = document.createElement("div");
+        row.className = "row assistant assistant-plain";
+        if (phase) row.dataset.phase = String(phase);
+        row.innerHTML = `
+          <div class="assistant-plain-content">${renderMessageHtml(text)}</div>
+          <div class="meta">${escapeHtml(metaText)}</div>
+        `;
+        chat.appendChild(row);
+        chat.scrollTop = chat.scrollHeight;
+        updateScrollToBottomButton();
+        return row;
+      }
+
+      function replaceBubbleWithProcessBlock(bubbleEl, text, metaText = "", open = false, phase = "") {
+        if (!(bubbleEl instanceof HTMLElement)) return null;
+        const row = bubbleEl.closest(".row.assistant");
+        if (!(row instanceof HTMLElement)) return null;
+        if (phase) row.dataset.phase = String(phase);
+        row.classList.add("assistant-process");
+        if (open) row.classList.add("open");
+        bubbleEl.remove();
+
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "assistant-process-toggle";
+        toggle.innerHTML = `
+          <span class="assistant-process-meta">${escapeHtml(metaText)}</span>
+          <span class="assistant-process-arrow">${open ? "v" : ">"}</span>
+        `;
+
+        const body = document.createElement("div");
+        body.className = "assistant-process-body";
+        body.innerHTML = renderMessageHtml(text);
+
+        const summaryBtn = row.querySelector(".stream-bubble-summary");
+        const commandList = row.querySelector(".stream-bubble-command-list");
+        if (summaryBtn instanceof HTMLElement) {
+          row.classList.add("has-stream-summary");
+          if (commandList instanceof HTMLElement) {
+            row.insertBefore(body, commandList);
+          } else {
+            summaryBtn.insertAdjacentElement("afterend", body);
+          }
+        } else {
+          row.appendChild(toggle);
+          row.appendChild(body);
+        }
+        return row;
+      }
+
+      function appendAssistantByPhase(text, phase = "", timestamp = "") {
+        const normalizedPhase = String(phase || "").trim();
+        const phaseLabel = localizePhase(normalizedPhase);
+        const metaText = `${t("roleAssistant")}${phaseLabel ? ` · ${phaseLabel}` : ""}${
+          timestamp ? ` · ${formatTs(timestamp)}` : ""
+        }`;
+
+        if (normalizedPhase && normalizedPhase !== "final_answer") {
+          return createProcessBlock(text, metaText, false, normalizedPhase);
+        }
+        return createAssistantPlainBlock(text, metaText, normalizedPhase || "final_answer");
+      }
+
+      function groupMessagesForRender(messages) {
+        const grouped = [];
+        let pendingAssistantGroup = null;
+
+        const flushPending = () => {
+          if (!pendingAssistantGroup) return;
+          grouped.push({
+            role: "assistant",
+            phase: pendingAssistantGroup.phase,
+            timestamp: pendingAssistantGroup.timestamp,
+            text: pendingAssistantGroup.texts.filter(Boolean).join("\n\n"),
+          });
+          pendingAssistantGroup = null;
+        };
+
+        for (const m of messages) {
+          if (m?.role !== "assistant") {
+            flushPending();
+            grouped.push(m);
+            continue;
+          }
+
+          const phase = String(m?.phase || "").trim();
+          const isProcess = phase !== "final_answer";
+          if (!isProcess) {
+            flushPending();
+            grouped.push(m);
+            continue;
+          }
+
+          if (!pendingAssistantGroup) {
+            pendingAssistantGroup = {
+              phase: phase || "commentary",
+              timestamp: m.timestamp || "",
+              texts: [m.text || ""],
+            };
+            continue;
+          }
+
+          pendingAssistantGroup.texts.push(m.text || "");
+        }
+
+        flushPending();
+        return grouped;
+      }
+
+      function ensureProcessFinalDivider(processRow, show) {
+        if (!(processRow instanceof HTMLElement)) return;
+        const existing = processRow.nextElementSibling;
+        const isExistingDivider =
+          existing instanceof HTMLElement && existing.classList.contains("assistant-final-divider-row");
+        if (!show) {
+          if (isExistingDivider) existing.remove();
+          return;
+        }
+
+        if (isExistingDivider) return;
+
+        const row = document.createElement("div");
+        row.className = "row assistant-final-divider-row";
+        const divider = document.createElement("div");
+        divider.className = "assistant-final-divider";
+        divider.innerHTML = `<span class="assistant-final-divider-label">${
+          currentLang === "en" ? "Final message" : "最終訊息"
+        }</span>`;
+        row.appendChild(divider);
+        processRow.insertAdjacentElement("afterend", row);
+      }
+
+      function refreshFinalDividers() {
+        const rows = Array.from(chat.querySelectorAll(".row.assistant"));
+        for (let i = 0; i < rows.length; i += 1) {
+          const row = rows[i];
+          if (!(row instanceof HTMLElement)) continue;
+          if (!row.classList.contains("assistant-process")) continue;
+
+          const phase = String(row.dataset.phase || "").trim();
+          const next = rows[i + 1];
+          const nextPhase = next instanceof HTMLElement ? String(next.dataset.phase || "").trim() : "";
+          const shouldShow = phase !== "final_answer" && nextPhase === "final_answer";
+          ensureProcessFinalDivider(row, shouldShow);
+        }
+      }
+
+      function setBubbleText(bubbleEl, text) {
+        if (!(bubbleEl instanceof HTMLElement)) return;
+        const contentEl = bubbleEl.querySelector(".message-content");
+        if (!(contentEl instanceof HTMLElement)) return;
+        contentEl.innerHTML = renderMessageHtml(text);
+      }
+
       function renderMessages(messages) {
         streamingAssistantBubble = null;
         if (!messages.length) {
           setEmpty(t("emptyNoMessages"));
           return;
         }
-        chat.innerHTML = messages
-          .map((m) => {
-            const roleClass = m.role === "user" ? "user" : "assistant";
-            const roleLabel = m.role === "user" ? t("roleUser") : t("roleAssistant");
-            const localizedPhase = localizePhase(m.phase);
-            const phase = localizedPhase ? ` · ${localizedPhase}` : "";
-            return `
-              <div class="row ${roleClass}">
-                <div class="bubble">
-                  ${renderMessageHtml(m.text)}
-                  <div class="meta">${roleLabel}${phase}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}</div>
-                </div>
-              </div>
-            `;
-          })
-          .join("");
+        const groupedMessages = groupMessagesForRender(messages);
+        chat.innerHTML = "";
+        for (const m of groupedMessages) {
+          if (m.role === "user") {
+            appendMessage(
+              "user",
+              m.text,
+              `${t("roleUser")}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`
+            );
+            continue;
+          }
+          appendAssistantByPhase(m.text, m.phase, m.timestamp);
+        }
+        refreshFinalDividers();
         chat.scrollTop = chat.scrollHeight;
         updateScrollToBottomButton();
       }
@@ -618,6 +1096,27 @@
           done: "完成",
         };
         return STATUS_ZH[raw] || raw;
+      }
+
+      function autoSwitchModelOnAccessError(messageText) {
+        const text = String(messageText || "").toLowerCase();
+        if (!text.includes("does not have access to model")) return false;
+
+        const preferred = availableModels.find((item) => item.value === "gpt-5.2")?.value;
+        const fallback =
+          preferred ||
+          availableModels.find((item) => item.value && item.value !== currentModel)?.value;
+        if (!fallback || fallback === currentModel) return false;
+
+        currentModel = fallback;
+        localStorage.setItem("chat_model", currentModel);
+        renderModelPicker();
+        addActivity(
+          currentLang === "en"
+            ? `Auto-switched model to ${currentModel} (access fallback)`
+            : `偵測到模型權限問題，已自動切換到 ${currentModel}`
+        );
+        return true;
       }
 
       function formatActivityEvent(event) {
@@ -770,10 +1269,75 @@
 
       async function syncMessagesNoFlicker(sessionId) {
         if (!sessionId) return;
+        if (isSending || streamingAssistantBubble) return;
         const res = await fetch(`/api/sessions/${sessionId}/messages`);
         const data = await res.json();
         if (!res.ok) return;
         renderMessages(data.messages || []);
+      }
+
+      async function syncMessagesForce(sessionId) {
+        if (!sessionId) return;
+        const res = await fetch(`/api/sessions/${sessionId}/messages`);
+        const data = await res.json();
+        if (!res.ok) return;
+        renderMessages(data.messages || []);
+      }
+
+      async function syncMessagesWithRetry(sessionId, retries = 3, delayMs = 300) {
+        if (!sessionId) return;
+        for (let i = 0; i < retries; i += 1) {
+          await syncMessagesForce(sessionId);
+          if (i < retries - 1) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+      }
+
+      async function reconcileAssistantSplitFromSession(sessionId) {
+        if (!sessionId || !liveStreamState) return;
+        if (liveStreamState.splitReconciled) return;
+        const firstBubble = liveStreamState.currentAssistantBubble;
+        if (!(firstBubble instanceof HTMLElement)) return;
+
+        let data;
+        try {
+          const res = await fetch(`/api/sessions/${sessionId}/messages`);
+          data = await res.json();
+          if (!res.ok) return;
+        } catch {
+          return;
+        }
+
+        const messages = Array.isArray(data.messages) ? data.messages : [];
+        if (!messages.length) return;
+        const tail = [];
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+          const msg = messages[i];
+          if (msg?.role !== "assistant") break;
+          tail.unshift(msg);
+        }
+        if (!tail.length) return;
+
+        const processItems = tail.filter((m) => String(m?.phase || "").trim() !== "final_answer");
+        const finalItems = tail.filter((m) => String(m?.phase || "").trim() === "final_answer");
+        if (!processItems.length || !finalItems.length) return;
+
+        const firstProcess = processItems[0];
+        const processPhase = String(firstProcess?.phase || "").trim();
+        const processText = processItems.map((m) => String(m?.text || "")).filter(Boolean).join("\n\n");
+        const processPhaseLabel = localizePhase(processPhase);
+        const processMeta = `${t("roleAssistant")}${processPhaseLabel ? ` · ${processPhaseLabel}` : ""}${
+          firstProcess?.timestamp ? ` · ${formatTs(firstProcess.timestamp)}` : ""
+        }`;
+
+        replaceBubbleWithProcessBlock(firstBubble, processText, processMeta, false, processPhase);
+
+        for (const msg of finalItems) {
+          appendAssistantByPhase(msg.text || "", msg.phase || "", msg.timestamp || "");
+        }
+        refreshFinalDividers();
+        liveStreamState.splitReconciled = true;
       }
 
       async function refreshServerLock() {
@@ -833,6 +1397,7 @@
           t("thinkingWord"),
           t("assistantStreaming")
         );
+        initLiveStream();
 
         try {
           const res = await fetch("/api/chat/stream", {
@@ -888,28 +1453,25 @@
                 gotStreamEvent = true;
                 const text = String(event.text || "thinking");
                 const statusText = localizeStatusWord(text);
+                const statusLine =
+                  currentLang === "en"
+                    ? `Status: ${statusText || text}`
+                    : `狀態：${statusText || text}`;
                 setStatus(
                   text === "thinking"
                     ? t("statusThinking")
                     : `${t("statusSending")} (${statusText || text})`
                 );
-                addActivity(
-                  currentLang === "en"
-                    ? `Status: ${statusText || text}`
-                    : `狀態：${statusText || text}`
-                );
-                showActivityBubble(
-                  currentLang === "en"
-                    ? `Status: ${statusText || text}`
-                    : `狀態：${statusText || text}`,
-                  true
-                );
+                addActivity(statusLine);
+                showActivityBubble(statusLine, true);
                 continue;
               }
               if (event.type === "activity") {
                 gotStreamEvent = true;
+                const rawText = String(event.text || "").trim();
                 const text = formatActivityEvent(event);
                 if (text) addActivity(text);
+                if (rawText) appendStreamActivity(rawText);
                 continue;
               }
               if (event.type === "session" && event.sessionId) {
@@ -926,29 +1488,75 @@
               if (event.type === "assistant") {
                 gotStreamEvent = true;
                 if (streamingAssistantBubble) {
-                  const textNode = streamingAssistantBubble.childNodes[0];
-                  const current = textNode?.textContent || "";
-                  textNode.textContent = `${current}${current ? "\n" : ""}${event.text || ""}`;
+                  appendStreamNote(event.text || "");
                 }
                 chat.scrollTop = chat.scrollHeight;
                 updateScrollToBottomButton();
                 continue;
               }
-              if (event.type === "error") throw new Error(String(event.message || "Unknown stream error"));
+              if (event.type === "assistant_boundary") {
+                gotStreamEvent = true;
+                splitLiveAssistantBubble();
+                continue;
+              }
+              if (event.type === "assistant_phase") {
+                gotStreamEvent = true;
+                updateLiveAssistantPhase(event.phase || "");
+                continue;
+              }
+              if (event.type === "error") {
+                const errMsg = String(event.message || "Unknown stream error");
+                autoSwitchModelOnAccessError(errMsg);
+                throw new Error(errMsg);
+              }
               if (event.type === "done") {
                 setStatus(t("statusDone"));
+                collapseCommandLogs();
+                if (selectedSessionId) {
+                  await reconcileAssistantSplitFromSession(selectedSessionId);
+                }
                 addActivity(currentLang === "en" ? "Stream done" : "串流完成");
                 hideActivityBubble(700);
               }
             }
           }
 
+          if (buffer.trim()) {
+            try {
+              const event = JSON.parse(buffer);
+              if (event.type === "assistant" && streamingAssistantBubble) {
+                appendStreamNote(event.text || "");
+              } else if (event.type === "assistant_boundary") {
+                splitLiveAssistantBubble();
+              } else if (event.type === "assistant_phase") {
+                updateLiveAssistantPhase(event.phase || "");
+              } else if (event.type === "activity") {
+                const rawText = String(event.text || "").trim();
+                const text = formatActivityEvent(event);
+                if (text) addActivity(text);
+                if (rawText) appendStreamActivity(rawText);
+              } else if (event.type === "done") {
+                setStatus(t("statusDone"));
+                collapseCommandLogs();
+                if (selectedSessionId) {
+                  await reconcileAssistantSplitFromSession(selectedSessionId);
+                }
+                addActivity(currentLang === "en" ? "Stream done" : "串流完成");
+                hideActivityBubble(700);
+              }
+            } catch {
+              // ignore trailing partial json line
+            }
+          }
+
           if (selectedSessionId) {
             await loadSessions();
             picker.value = selectedSessionId;
-            await loadMessages(selectedSessionId, { showLoading: false });
+            await syncMessagesWithRetry(selectedSessionId, 3, 300);
+            await loadStats(selectedSessionId);
             setTimeout(() => {
               loadSessions().catch(() => {});
+              syncMessagesWithRetry(selectedSessionId, 2, 350).catch(() => {});
             }, 1500);
           }
           setStatus(t("statusReady"));
@@ -962,8 +1570,8 @@
           hideActivityBubble(1200);
         } finally {
           if (syncTimer) clearInterval(syncTimer);
-          if (selectedSessionId) await loadMessages(selectedSessionId, { showLoading: false });
           setSendingState(false);
+          resetLiveStream();
           streamingAssistantBubble = null;
           uploadedImages = [];
           renderAttachments();
@@ -1016,6 +1624,18 @@
 
       chat.addEventListener("click", (e) => {
         if (!(e.target instanceof Element)) return;
+        const processBtn = e.target.closest(".assistant-process-toggle");
+        if (processBtn instanceof HTMLButtonElement) {
+          const row = processBtn.closest(".row.assistant.assistant-process");
+          if (!(row instanceof HTMLElement)) return;
+          row.classList.toggle("open");
+          const arrow = processBtn.querySelector(".assistant-process-arrow");
+          if (arrow instanceof HTMLElement) {
+            arrow.textContent = row.classList.contains("open") ? "v" : ">";
+          }
+          updateScrollToBottomButton();
+          return;
+        }
         const img = e.target.closest(".inline-image");
         if (!(img instanceof HTMLImageElement)) return;
         openImageViewer(img.src, img.alt || "preview");
@@ -1163,8 +1783,10 @@
       (async () => {
         try {
           addActivity(currentLang === "en" ? "App started" : "應用已啟動");
+          setModelLoadingMask(true, false);
           setLoading();
           await loadModelOptions();
+          setModelLoadingMask(false, false);
           await loadSessions();
           await loadMessages(selectedSessionId);
           await refreshServerLock();
@@ -1176,6 +1798,9 @@
         } catch (error) {
           setEmpty(error instanceof Error ? error.message : "Unknown error");
           setStatus("Error");
+          setModelLoadingMask(true, true);
         }
       })();
     
+
+

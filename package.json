@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "codex-mobile-chat",
   "module": "src/server.ts",
   "type": "module",
@@ -17,9 +17,10 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "hono": "^4.12.9"
+    "@highlightjs/cdn-assets": "^11.11.1",
+    "dompurify": "^3.3.3",
+    "highlight.js": "^11.11.1",
+    "hono": "^4.12.9",
+    "marked": "^17.0.5"
   }
 }
-
-
-

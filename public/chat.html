@@ -4,9 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Codex Session Chat</title>
-        <link rel="stylesheet" href="/public/styles/chat.css" />
+    <link rel="stylesheet" href="/public/styles/chat.css" />
+    <link rel="stylesheet" href="/public/vendor/highlightjs/github.min.css" />
   </head>
   <body>
+    <div id="modelLoadingMask" class="model-loading-mask open" aria-live="polite" aria-busy="true">
+      <div class="model-loading-card">
+        <div id="modelLoadingTitle" class="model-loading-title">讀取模型列表中...</div>
+        <div id="modelLoadingSub" class="model-loading-sub">Loading model list...</div>
+      </div>
+    </div>
     <div class="app">
       <div class="top">
         <div class="top-bar">
@@ -80,8 +87,10 @@
         </form>
       </div>
     </div>
-
-        <script src="/public/scripts/chat.js"></script>
+    <script src="/public/vendor/marked/marked.umd.js"></script>
+    <script src="/public/vendor/dompurify/purify.min.js"></script>
+    <script src="/public/vendor/highlightjs/highlight.min.js"></script>
+    <script src="/public/scripts/chat.js"></script>
   </body>
 </html>
 
