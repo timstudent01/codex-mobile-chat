@@ -56,10 +56,17 @@
       </div>
       <div id="imageViewer" class="image-viewer" aria-hidden="true">
         <div class="image-viewer-inner">
+          <button id="imageViewerPrev" class="image-viewer-nav prev" type="button" aria-label="Previous image">
+            &#8249;
+          </button>
+          <button id="imageViewerNext" class="image-viewer-nav next" type="button" aria-label="Next image">
+            &#8250;
+          </button>
           <button id="imageViewerClose" class="image-viewer-close" type="button" aria-label="Close">
             &times;
           </button>
           <img id="imageViewerImg" class="image-viewer-img" alt="preview" />
+          <div id="imageViewerCounter" class="image-viewer-counter"></div>
         </div>
       </div>
       <div id="activityBubble" class="activity-bubble" aria-live="polite"></div>

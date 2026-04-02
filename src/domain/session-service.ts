@@ -12,12 +12,24 @@ export type SessionSummary = {
   updatedAt: string;
 };
 
-export type SessionMessage = {
+type SessionMessageBase = {
   role: "user" | "assistant";
-  text: string;
   timestamp: string;
   phase?: string;
 };
+
+export type SessionTextMessage = SessionMessageBase & {
+  type: "text";
+  text: string;
+};
+
+export type SessionImageMessage = SessionMessageBase & {
+  type: "image";
+  imageUrl: string;
+  fileName: string;
+};
+
+export type SessionMessage = SessionTextMessage | SessionImageMessage;
 
 export type SessionChatResult = {
   sessionId: string;
@@ -41,6 +53,8 @@ type TokenCountSnapshot = {
 
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
+const ASCII_ONLY_PATTERN = /^[\x00-\x7F]*$/;
+const HIDDEN_SESSION_TITLES = new Set(["Reply with exactly OK."]);
 
 function getSessionIdFromRolloutPath(filePath: string): string | null {
   const match = filePath.match(/rollout-.*-([0-9a-f-]{36})\.jsonl$/i);
@@ -69,6 +83,85 @@ function getTextFromContent(content: unknown): string {
   return chunks.join("\n\n").trim();
 }
 
+function sanitizeUserRenderText(text: string): string {
+  if (!text) return "";
+  const withoutImageTags = text.replace(/<\/?image\b[^>]*>/gi, " ");
+  const withoutLegacyMarkdownImages = withoutImageTags.replace(
+    /!\[[^\]]*]\((?:data:image\/[^)]+|https?:\/\/[^)\s]*\/public\/uploads\/[^)]+|\/public\/uploads\/[^)]+)\)/gi,
+    " "
+  );
+  return withoutLegacyMarkdownImages
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+type MarkdownImageRef = {
+  url: string;
+  fileName: string;
+};
+
+function parseFileNameFromImageUrl(imageUrl: string): string {
+  const trimmed = String(imageUrl || "").trim();
+  if (!trimmed) return "image";
+  if (/^data:image\//i.test(trimmed)) {
+    const m = trimmed.match(/^data:image\/([a-zA-Z0-9.+-]+);/i);
+    const ext = m?.[1]?.toLowerCase() || "png";
+    return `image.${ext}`;
+  }
+  try {
+    const urlObj = new URL(trimmed, "http://local");
+    const pathname = urlObj.pathname || "";
+    const fromPath = path.posix.basename(pathname);
+    return fromPath && fromPath !== "/" ? fromPath : "image";
+  } catch {
+    return "image";
+  }
+}
+
+function extractMarkdownImages(text: string): { text: string; images: MarkdownImageRef[] } {
+  const source = String(text || "");
+  if (!source) return { text: "", images: [] };
+
+  const images: MarkdownImageRef[] = [];
+  const cleaned = source.replace(
+    /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    (_, altRaw, urlRaw) => {
+      const url = String(urlRaw || "").trim().replace(/^<|>$/g, "");
+      if (!url) return "";
+      if (!/^(https?:\/\/|data:image\/|\/public\/uploads\/)/i.test(url)) return "";
+      const alt = String(altRaw || "").trim();
+      images.push({
+        url,
+        fileName: alt || parseFileNameFromImageUrl(url),
+      });
+      return "";
+    }
+  );
+
+  return {
+    text: cleaned.replace(/\n{3,}/g, "\n\n").trim(),
+    images,
+  };
+}
+
+function getImageUrlsFromContent(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const urls: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const type = (part as { type?: unknown }).type;
+    if (type !== "input_image") continue;
+    const imageUrl = (part as { image_url?: unknown }).image_url;
+    if (typeof imageUrl === "string" && imageUrl.trim()) {
+      urls.push(imageUrl.trim());
+    }
+  }
+  return urls;
+}
+
 function shouldHideUserMessage(text: string): boolean {
   return text.includes("<environment_context>") || text.includes("<cwd>");
 }
@@ -77,6 +170,15 @@ function toSessionTitle(text: string, maxLen = 56): string {
   const singleLine = text.replace(/\s+/g, " ").trim();
   if (!singleLine) return "";
   return singleLine.length > maxLen ? `${singleLine.slice(0, maxLen - 1)}...` : singleLine;
+}
+
+function normalizeCwdForCodex(cwd: string | null | undefined): string {
+  const fallback = process.cwd();
+  if (typeof cwd !== "string") return fallback;
+  const normalized = cwd.trim();
+  if (!normalized) return fallback;
+  if (!ASCII_ONLY_PATTERN.test(normalized)) return fallback;
+  return normalized;
 }
 
 async function findSessionFile(sessionId: string): Promise<string | null> {
@@ -189,7 +291,8 @@ async function inferSessionTitleFromRollout(sessionId: string): Promise<string |
     const payload = row.payload;
     if (!payload || payload.type !== "message" || payload.role !== "user") continue;
 
-    const content = getTextFromContent(payload.content);
+    const extracted = extractMarkdownImages(getTextFromContent(payload.content));
+    const content = sanitizeUserRenderText(extracted.text);
     if (!content || shouldHideUserMessage(content)) continue;
 
     const title = toSessionTitle(content);
@@ -310,18 +413,20 @@ export async function listSessions(limit = 50): Promise<SessionSummary[]> {
     }
   }
 
-  const sessions = Array.from(latestById.values())
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .slice(0, limit);
-
-  // Prefer human-readable titles if index thread_name is unavailable.
-  await Promise.all(
-    sessions.map(async (session) => {
-      if (session.title && session.title !== session.id) return;
+  const sorted = Array.from(latestById.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const sessions: SessionSummary[] = [];
+  for (const item of sorted) {
+    const session = { ...item };
+    if (!session.title || session.title === session.id) {
       const inferredTitle = await inferSessionTitleFromRollout(session.id);
       if (inferredTitle) session.title = inferredTitle;
-    })
-  );
+    }
+    if (HIDDEN_SESSION_TITLES.has(session.title.trim())) {
+      continue;
+    }
+    sessions.push(session);
+    if (sessions.length >= limit) break;
+  }
 
   return sessions;
 }
@@ -352,16 +457,43 @@ export async function getSessionMessages(sessionId: string): Promise<SessionMess
     if (!payload || payload.type !== "message") continue;
     if (payload.role !== "user" && payload.role !== "assistant") continue;
 
-    const content = getTextFromContent(payload.content);
-    if (!content) continue;
-    if (payload.role === "user" && shouldHideUserMessage(content)) continue;
+    const rawContent = getTextFromContent(payload.content);
+    const extracted = extractMarkdownImages(rawContent);
+    const content =
+      payload.role === "user"
+        ? sanitizeUserRenderText(extracted.text)
+        : extracted.text;
+    const imageUrls = new Set<string>();
+    for (const item of extracted.images) {
+      if (item.url) imageUrls.add(item.url);
+    }
+    for (const url of getImageUrlsFromContent(payload.content)) {
+      if (url) imageUrls.add(url);
+    }
 
-    messages.push({
-      role: payload.role,
-      text: content,
-      timestamp: row.timestamp ?? "",
-      phase: payload.phase,
-    });
+    if (payload.role === "user" && content && shouldHideUserMessage(content)) continue;
+    if (!content && imageUrls.size === 0) continue;
+
+    if (content) {
+      messages.push({
+        role: payload.role,
+        type: "text",
+        text: content,
+        timestamp: row.timestamp ?? "",
+        phase: payload.phase,
+      });
+    }
+
+    for (const imageUrl of imageUrls) {
+      messages.push({
+        role: payload.role,
+        type: "image",
+        imageUrl,
+        fileName: parseFileNameFromImageUrl(imageUrl),
+        timestamp: row.timestamp ?? "",
+        phase: payload.phase,
+      });
+    }
   }
 
   return messages;
@@ -386,7 +518,7 @@ export async function chatWithSession(
     throw new Error("Invalid model");
   }
 
-  const cwd = (await readSessionMetaCwd(sessionId)) ?? process.cwd();
+  const cwd = normalizeCwdForCodex(await readSessionMetaCwd(sessionId));
   const args = ["codex", "exec"] as string[];
   if (normalizedModel) {
     args.push("-m", normalizedModel);

@@ -26,20 +26,19 @@ const AVAILABLE_MODELS = [
   "gpt-5.1-codex-max",
   "gpt-5.1-codex-mini",
 ];
-const MODEL_PROBE_PROMPT = "Reply with exactly OK.";
 const MODEL_DISCOVERY_TTL_MS = 5 * 60 * 1000;
-const MODEL_PROBE_TIMEOUT_MS = 8 * 1000;
 const MODEL_LIST_TIMEOUT_MS = 3 * 1000;
+const STREAM_HARD_TIMEOUT_MS = 8 * 60 * 1000;
+const ASCII_ONLY_PATTERN = /^[\x00-\x7F]*$/;
 
 type ErrorLogMeta = Record<string, unknown>;
 type ModelProbeCache = {
   at: number;
   models: string[];
-  source: "codex-model" | "probe" | "fallback";
+  source: "codex-model" | "fallback";
 };
 
 let modelProbeCache: ModelProbeCache | null = null;
-let backgroundModelRefreshPromise: Promise<void> | null = null;
 
 const pickDefaultModel = (models: string[]): string | null => {
   if (!Array.isArray(models) || models.length === 0) return null;
@@ -79,79 +78,6 @@ const withTimeout = async <T>(
         reject(error);
       });
   });
-};
-
-const probeSingleModel = async (model: string): Promise<boolean> => {
-  let proc: any = null;
-  try {
-    const ok = await withTimeout(async () => {
-      proc = Bun.spawn(
-        ["codex", "exec", "-m", model, "-s", "danger-full-access", "--skip-git-repo-check", "--json", "-"],
-        {
-          cwd: process.cwd(),
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-        }
-      );
-
-      if (proc.stdin && typeof proc.stdin !== "number") {
-        proc.stdin.write(`${MODEL_PROBE_PROMPT}\n`);
-        proc.stdin.end();
-      }
-
-      let sawTurnCompleted = false;
-      const reader = proc.stdout && typeof proc.stdout !== "number" ? proc.stdout.getReader() : null;
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split(/\r?\n/);
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            let row: any;
-            try {
-              row = JSON.parse(line);
-            } catch {
-              continue;
-            }
-            if (row?.type === "turn.completed") {
-              sawTurnCompleted = true;
-            }
-          }
-        }
-      }
-
-      const exitCode = await proc.exited;
-      return exitCode === 0 && sawTurnCompleted;
-    }, MODEL_PROBE_TIMEOUT_MS);
-
-    return ok;
-  } catch {
-    return false;
-  } finally {
-    if (proc) {
-      try {
-        proc.kill();
-      } catch {
-        // ignore
-      }
-    }
-  }
-};
-
-const discoverAccessibleModels = async (): Promise<string[]> => {
-  const checks = await Promise.all(
-    AVAILABLE_MODELS.map(async (model) => ({ model, ok: await probeSingleModel(model) }))
-  );
-  const models = checks.filter((item) => item.ok).map((item) => item.model);
-  return models.length > 0 ? models : AVAILABLE_MODELS;
 };
 
 const parseModelsFromText = (raw: string): string[] => {
@@ -231,43 +157,6 @@ const getAccessibleModels = async (forceRefresh = false): Promise<ModelProbeCach
     return modelProbeCache;
   }
 
-  if (!forceRefresh) {
-    if (!modelProbeCache) {
-      modelProbeCache = {
-        at: Date.now(),
-        models: AVAILABLE_MODELS,
-        source: "fallback",
-      };
-    }
-    if (!backgroundModelRefreshPromise) {
-      backgroundModelRefreshPromise = (async () => {
-        try {
-          const probed = await discoverAccessibleModels();
-          if (probed.length > 0) {
-            modelProbeCache = {
-              at: Date.now(),
-              models: probed,
-              source: "probe",
-            };
-          }
-        } finally {
-          backgroundModelRefreshPromise = null;
-        }
-      })();
-    }
-    return modelProbeCache;
-  }
-
-  const probed = await discoverAccessibleModels();
-  if (probed.length > 0) {
-    modelProbeCache = {
-      at: Date.now(),
-      models: probed,
-      source: "probe",
-    };
-    return modelProbeCache;
-  }
-
   modelProbeCache = {
     at: Date.now(),
     models: AVAILABLE_MODELS,
@@ -285,6 +174,15 @@ const truncateForActivity = (text: string, max = 120): string => {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   return normalized.length > max ? `${normalized.slice(0, max - 3)}...` : normalized;
+};
+
+const normalizeCwdForCodex = (cwd: string | null | undefined): string => {
+  const fallback = process.cwd();
+  if (typeof cwd !== "string") return fallback;
+  const normalized = cwd.trim();
+  if (!normalized) return fallback;
+  if (!ASCII_ONLY_PATTERN.test(normalized)) return fallback;
+  return normalized;
 };
 
 const isReconnectHeaderDecodeNoise = (message: string): boolean => {
@@ -770,14 +668,37 @@ app.post("/api/uploads", async (c) => {
 });
 
 app.post("/api/chat/stream", async (c) => {
-  const { sessionId, prompt, model } = await c.req.json<{
+  const { sessionId, prompt, model, images } = await c.req.json<{
     sessionId?: string | null;
     prompt?: string;
     model?: string | null;
+    images?: string[] | null;
   }>();
   const userPrompt = (prompt ?? "").trim();
   const normalizedSessionId = (sessionId ?? "").trim();
   const normalizedModel = normalizeRequestedModel(model);
+  const uploadsRoot = path.resolve("./public/uploads");
+  const uploadsRootPrefix = `${uploadsRoot.toLowerCase()}${path.sep}`;
+  const requestedImages = Array.isArray(images) ? images : [];
+  const normalizedImages: string[] = [];
+
+  for (const raw of requestedImages) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+
+    const resolved = path.resolve(trimmed);
+    const lowerResolved = resolved.toLowerCase();
+    if (lowerResolved !== uploadsRoot.toLowerCase() && !lowerResolved.startsWith(uploadsRootPrefix)) {
+      return c.json({ error: "Image path is outside allowed upload directory" }, 400);
+    }
+
+    if (!(await Bun.file(resolved).exists())) {
+      return c.json({ error: `Image file not found: ${path.basename(resolved)}` }, 400);
+    }
+
+    normalizedImages.push(resolved);
+  }
 
   if (!userPrompt) {
     return c.json({ error: "Prompt is required" }, 400);
@@ -789,6 +710,11 @@ app.post("/api/chat/stream", async (c) => {
       let streamClosed = false;
       let proc: Bun.Subprocess | null = null;
       let procExited = false;
+      let stopRequested = false;
+      let clientAborted = false;
+      let hardTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+      const requestSignal = c.req.raw?.signal;
       let trackedSessionId = normalizedSessionId || "";
       if (trackedSessionId) {
         markSessionStart(trackedSessionId);
@@ -799,6 +725,23 @@ app.post("/api/chat/stream", async (c) => {
       let lastCodexErrorMessage = "";
       let sawReconnectHeaderDecodeNoise = false;
       let lastAssistantPhase = "";
+      const requestAbortHandler = () => {
+        clientAborted = true;
+        streamClosed = true;
+        stopRequested = true;
+        if (proc && !procExited) {
+          try {
+            proc.kill();
+          } catch {
+            // ignore abort-time kill failures
+          }
+        }
+      };
+      if (requestSignal) {
+        if (requestSignal.aborted) requestAbortHandler();
+        else requestSignal.addEventListener("abort", requestAbortHandler, { once: true });
+      }
+
       const push = (event: Record<string, unknown>) => {
         if (streamClosed) return false;
         try {
@@ -806,9 +749,21 @@ app.post("/api/chat/stream", async (c) => {
           return true;
         } catch {
           streamClosed = true;
+          stopRequested = true;
+          if (proc && !procExited) {
+            try {
+              proc.kill();
+            } catch {
+              // ignore disconnect-time kill failures
+            }
+          }
           return false;
         }
       };
+      heartbeatTimer = setInterval(() => {
+        if (stopRequested) return;
+        push({ type: "heartbeat", at: Date.now() });
+      }, 5000);
       const pushAssistantChunked = async (text: string) => {
         const normalized = text.trim();
         if (!normalized) return;
@@ -832,13 +787,18 @@ app.post("/api/chat/stream", async (c) => {
       };
 
       try {
-        const cwd = normalizedSessionId
-          ? ((await getSessionCwd(normalizedSessionId)) ?? process.cwd())
-          : process.cwd();
+        const cwd = normalizeCwdForCodex(
+          normalizedSessionId
+            ? ((await getSessionCwd(normalizedSessionId)) ?? process.cwd())
+            : process.cwd()
+        );
 
         const args = ["codex", "exec"] as string[];
         if (normalizedModel) {
           args.push("-m", normalizedModel);
+        }
+        for (const imagePath of normalizedImages) {
+          args.push("--image", imagePath);
         }
         if (normalizedSessionId) {
           args.push(
@@ -846,12 +806,11 @@ app.post("/api/chat/stream", async (c) => {
             "danger-full-access",
             "resume",
             normalizedSessionId,
-            "-",
             "--skip-git-repo-check",
             "--json"
           );
         } else {
-          args.push("-s", "danger-full-access", "--skip-git-repo-check", "--json", "-");
+          args.push("-s", "danger-full-access", "--skip-git-repo-check", "--json");
         }
 
         proc = Bun.spawn(args, {
@@ -860,28 +819,43 @@ app.post("/api/chat/stream", async (c) => {
           stdout: "pipe",
           stderr: "pipe",
         });
+        hardTimeoutTimer = setTimeout(() => {
+          stopRequested = true;
+          if (proc && !procExited) {
+            try {
+              proc.kill();
+            } catch {
+              // ignore timeout-time kill failures
+            }
+          }
+        }, STREAM_HARD_TIMEOUT_MS);
 
-        if (proc.stdin) {
-          proc.stdin.write(`${userPrompt}\n`);
-          proc.stdin.end();
+        const stdin = proc.stdin;
+        if (stdin && typeof stdin !== "number") {
+          stdin.write(`${userPrompt}\n`);
+          stdin.end();
         }
 
         push({ type: "status", text: "started" });
 
-        const reader = proc.stdout?.getReader();
+        const stdout = proc.stdout;
+        const reader = stdout && typeof stdout !== "number" ? stdout.getReader() : null;
         const decoder = new TextDecoder();
         let buffer = "";
 
         if (reader) {
           while (true) {
+            if (stopRequested) break;
             const { done, value } = await reader.read();
             if (done) break;
+            if (stopRequested) break;
             buffer += decoder.decode(value, { stream: true });
 
             const lines = buffer.split(/\r?\n/);
             buffer = lines.pop() ?? "";
 
             for (const line of lines) {
+              if (stopRequested) break;
               if (!line.trim()) continue;
 
               let row: any;
@@ -938,6 +912,7 @@ app.post("/api/chat/stream", async (c) => {
                 }
                 for (const text of assistantTexts) {
                   await pushAssistantChunked(text);
+                  if (stopRequested) break;
                 }
                 continue;
               }
@@ -946,8 +921,12 @@ app.post("/api/chat/stream", async (c) => {
         }
 
         let stderrText = "";
-        const stderrReader = proc.stderr?.getReader();
-        if (stderrReader) {
+        const stderrStream = proc.stderr;
+        const stderrReader =
+          stderrStream && typeof stderrStream !== "number"
+            ? stderrStream.getReader()
+            : null;
+        if (stderrReader && !stopRequested) {
           const stderrDecoder = new TextDecoder();
           while (true) {
             const { done, value } = await stderrReader.read();
@@ -958,7 +937,7 @@ app.post("/api/chat/stream", async (c) => {
 
         const exitCode = await proc.exited;
         procExited = true;
-        if (exitCode !== 0) {
+        if (exitCode !== 0 && !stopRequested) {
           await logError("POST /api/chat/stream codex exited", new Error("codex non-zero exit"), {
             exitCode,
             sessionId: trackedSessionId || normalizedSessionId || null,
@@ -977,19 +956,32 @@ app.post("/api/chat/stream", async (c) => {
           });
         }
 
-        push({ type: "done" });
+        if (!stopRequested) {
+          push({ type: "done" });
+        }
       } catch (error) {
         await logError("POST /api/chat/stream", error, {
           sessionId: trackedSessionId || normalizedSessionId || null,
           method: c.req.method,
           path: c.req.path,
         });
-        push({
-          type: "error",
-          message: toErrorMessage(error),
-        });
-        push({ type: "done" });
+        if (!stopRequested) {
+          push({
+            type: "error",
+            message: toErrorMessage(error),
+          });
+          push({ type: "done" });
+        }
       } finally {
+        if (hardTimeoutTimer) {
+          clearTimeout(hardTimeoutTimer);
+        }
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+        }
+        if (requestSignal) {
+          requestSignal.removeEventListener("abort", requestAbortHandler);
+        }
         activeRunCount = Math.max(0, activeRunCount - 1);
         if (trackedSessionId) {
           markSessionDone(trackedSessionId);
@@ -1007,6 +999,10 @@ app.post("/api/chat/stream", async (c) => {
           } catch {
             // already closed by runtime/client disconnect
           }
+        }
+        if (clientAborted) {
+          // Keep the stream endpoint silent on client disconnect while still releasing locks.
+          return;
         }
       }
     },
@@ -1088,7 +1084,12 @@ process.on("unhandledRejection", (reason) => {
   void logError("process unhandledRejection", reason);
 });
 
-// ?? ??瑼?嚗???
+app.use("/public/*", async (c, next) => {
+  c.header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  c.header("Pragma", "no-cache");
+  await next();
+});
+
 app.use("/public/*", serveStatic({ root: "./" }));
 
 export default {

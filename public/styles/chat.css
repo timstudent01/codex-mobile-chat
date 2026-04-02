@@ -504,7 +504,8 @@
         margin-top: 6px;
         border-width: 1px;
         padding: 8px 10px;
-        max-height: 420px;
+        max-height: none;
+        overflow: visible;
         opacity: 1;
         transform: translateY(0);
         pointer-events: auto;
@@ -665,7 +666,7 @@
       .image-viewer {
         position: fixed;
         inset: 0;
-        z-index: 60;
+        z-index: 1200;
         background: rgba(10, 16, 28, 0.78);
         display: none;
         align-items: center;
@@ -702,6 +703,48 @@
         line-height: 1;
         cursor: pointer;
       }
+      .image-viewer-nav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        background: rgba(15, 23, 42, 0.8);
+        color: #fff;
+        font-size: 24px;
+        line-height: 1;
+        cursor: pointer;
+        display: none;
+      }
+      .image-viewer-nav.show {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .image-viewer-nav.prev {
+        left: -48px;
+      }
+      .image-viewer-nav.next {
+        right: -48px;
+      }
+      .image-viewer-counter {
+        position: absolute;
+        left: 50%;
+        bottom: -32px;
+        transform: translateX(-50%);
+        color: #fff;
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 999px;
+        padding: 3px 10px;
+        font-size: 12px;
+        display: none;
+      }
+      .image-viewer-counter.show {
+        display: inline-block;
+      }
       @media (max-width: 720px) {
         .top-bar {
           flex-direction: column;
@@ -722,6 +765,15 @@
           left: 50%;
           transform: translateX(-50%);
           top: 120px;
+        }
+        .image-viewer-nav.prev {
+          left: 8px;
+        }
+        .image-viewer-nav.next {
+          right: 8px;
+        }
+        .image-viewer-counter {
+          bottom: 8px;
         }
       }
     
@@ -870,7 +922,8 @@
         margin-top: 6px;
         border-width: 1px;
         padding: 8px 10px;
-        max-height: 320px;
+        max-height: none;
+        overflow: visible;
         opacity: 1;
         transform: translateY(0);
         pointer-events: auto;

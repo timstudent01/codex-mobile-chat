@@ -15,6 +15,9 @@
       const imageViewer = document.getElementById("imageViewer");
       const imageViewerImg = document.getElementById("imageViewerImg");
       const imageViewerClose = document.getElementById("imageViewerClose");
+      const imageViewerPrev = document.getElementById("imageViewerPrev");
+      const imageViewerNext = document.getElementById("imageViewerNext");
+      const imageViewerCounter = document.getElementById("imageViewerCounter");
       const activityBubble = document.getElementById("activityBubble");
       const statusText = document.getElementById("statusText");
       const appTitle = document.getElementById("appTitle");
@@ -50,8 +53,11 @@
       const activityEvents = [];
       let uploadedImages = [];
       let activityBubbleTimer = null;
+      let commandCollapseTimer = null;
       let liveStreamState = null;
       let modelLoadingFailed = false;
+      let imageViewerGallery = [];
+      let imageViewerIndex = 0;
 
       function normalizeModelValue(value) {
         if (typeof value !== "string") return "";
@@ -280,12 +286,20 @@
       }
 
       function resetLiveStream() {
+        if (commandCollapseTimer) {
+          clearTimeout(commandCollapseTimer);
+          commandCollapseTimer = null;
+        }
         liveStreamState = null;
       }
 
       function initLiveStream() {
         const contentEl = streamingAssistantBubble?.querySelector(".message-content");
         if (!(contentEl instanceof HTMLElement)) return;
+        if (commandCollapseTimer) {
+          clearTimeout(commandCollapseTimer);
+          commandCollapseTimer = null;
+        }
 
         liveStreamState = {
           assistantContentEl: contentEl,
@@ -510,6 +524,18 @@
           checked.add(bubbleEl);
           const state = liveStreamState.bubbleCommandState.get(bubbleEl);
           if (!state || !state.logs.length) continue;
+          const hasCommandLines =
+            state.listEl instanceof HTMLElement &&
+            state.listEl.querySelector(".stream-bubble-command-line");
+          if (!hasCommandLines) {
+            state.summaryBtn.style.display = "none";
+            state.listEl.classList.remove("open");
+            const rowElNoCmd = state.summaryBtn.closest(".row.assistant");
+            if (rowElNoCmd instanceof HTMLElement) {
+              rowElNoCmd.classList.remove("has-stream-summary");
+            }
+            continue;
+          }
 
           state.endedAt = Date.now();
           const elapsedSec = Math.max(1, Math.round((state.endedAt - state.startedAt) / 1000));
@@ -525,6 +551,16 @@
           );
           state.listEl.classList.remove("open");
         }
+      }
+
+      function scheduleCollapseCommandLogs(delayMs = 3500) {
+        if (commandCollapseTimer) {
+          clearTimeout(commandCollapseTimer);
+        }
+        commandCollapseTimer = setTimeout(() => {
+          collapseCommandLogs();
+          commandCollapseTimer = null;
+        }, delayMs);
       }
       function placeGlossaryPanel() {
         if (!glossaryPanel.classList.contains("open")) return;
@@ -680,6 +716,28 @@
         return tpl.innerHTML;
       }
 
+      function extractMarkdownImages(text) {
+        const source = String(text || "");
+        const images = [];
+        const cleaned = source.replace(
+          /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+          (_, altRaw, urlRaw) => {
+            const src = String(urlRaw || "").trim().replace(/^<|>$/g, "");
+            if (!src) return "";
+            if (!/^(https?:\/\/|data:image\/|\/public\/uploads\/)/i.test(src)) {
+              return "";
+            }
+            const fileName = String(altRaw || "").trim() || "assistant-image";
+            images.push({ url: src, fileName });
+            return "";
+          }
+        );
+        return {
+          text: cleaned.replace(/\n{3,}/g, "\n\n").trim(),
+          images,
+        };
+      }
+
       function renderAttachments() {
         if (!uploadedImages.length) {
           attachmentList.innerHTML = "";
@@ -690,7 +748,7 @@
           .map(
             (img, i) => `
               <div class="attachment-item">
-                <img src="${escapeHtml(img.url)}" alt="${escapeHtml(img.fileName)}" />
+                <img src="${escapeHtml(img.previewUrl || img.url)}" alt="${escapeHtml(img.fileName)}" />
                 <button type="button" class="attachment-remove" data-remove-index="${i}" aria-label="Remove image">
                   &times;
                 </button>
@@ -700,15 +758,19 @@
           .join("");
       }
 
-      function buildPromptWithImages(prompt, images) {
-        if (!images.length) return prompt;
-        const lines = images
-          .map((img, i) => `![uploaded-image-${i + 1}](${img.url})`)
-          .join("\n");
-        return `${prompt}\n${lines}`;
-      }
-
       async function uploadSelectedImages(files) {
+        const fileToDataUrl = (file) =>
+          new Promise((resolve) => {
+            try {
+              const reader = new FileReader();
+              reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+              reader.onerror = () => resolve("");
+              reader.readAsDataURL(file);
+            } catch {
+              resolve("");
+            }
+          });
+
         for (const file of files) {
           const formData = new FormData();
           formData.append("file", file);
@@ -719,10 +781,12 @@
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Upload failed");
+          const previewUrl = await fileToDataUrl(file);
 
           uploadedImages.push({
             fileName: data.fileName || file.name,
             url: data.url,
+            previewUrl: previewUrl || data.url,
             absolutePath: data.absolutePath,
             relativePath: data.relativePath,
           });
@@ -764,9 +828,35 @@
         drawerBackdrop.classList.remove("open");
       }
 
-      function openImageViewer(src, alt = "preview") {
-        imageViewerImg.src = src;
-        imageViewerImg.alt = alt;
+      function renderImageViewerState() {
+        if (!(imageViewerImg instanceof HTMLImageElement)) return;
+        const item = imageViewerGallery[imageViewerIndex];
+        if (!item) return;
+        imageViewerImg.src = String(item.src || "");
+        imageViewerImg.alt = String(item.alt || "preview");
+        const hasMultiple = imageViewerGallery.length > 1;
+        if (imageViewerPrev instanceof HTMLElement) {
+          imageViewerPrev.classList.toggle("show", hasMultiple);
+        }
+        if (imageViewerNext instanceof HTMLElement) {
+          imageViewerNext.classList.toggle("show", hasMultiple);
+        }
+        if (imageViewerCounter instanceof HTMLElement) {
+          if (hasMultiple) {
+            imageViewerCounter.textContent = `${imageViewerIndex + 1} / ${imageViewerGallery.length}`;
+            imageViewerCounter.classList.add("show");
+          } else {
+            imageViewerCounter.textContent = "";
+            imageViewerCounter.classList.remove("show");
+          }
+        }
+      }
+
+      function openImageViewer(src, alt = "preview", gallery = null, index = 0) {
+        const fallback = [{ src, alt }];
+        imageViewerGallery = Array.isArray(gallery) && gallery.length > 0 ? gallery : fallback;
+        imageViewerIndex = Math.max(0, Math.min(Number(index) || 0, imageViewerGallery.length - 1));
+        renderImageViewerState();
         imageViewer.classList.add("open");
         imageViewer.setAttribute("aria-hidden", "false");
       }
@@ -775,6 +865,20 @@
         imageViewer.classList.remove("open");
         imageViewer.setAttribute("aria-hidden", "true");
         imageViewerImg.removeAttribute("src");
+        imageViewerGallery = [];
+        imageViewerIndex = 0;
+        if (imageViewerCounter instanceof HTMLElement) {
+          imageViewerCounter.textContent = "";
+          imageViewerCounter.classList.remove("show");
+        }
+      }
+
+      function navigateImageViewer(step) {
+        if (!imageViewer.classList.contains("open")) return;
+        if (!Array.isArray(imageViewerGallery) || imageViewerGallery.length <= 1) return;
+        const total = imageViewerGallery.length;
+        imageViewerIndex = (imageViewerIndex + step + total) % total;
+        renderImageViewerState();
       }
 
       function renderSessionList(sessions) {
@@ -910,7 +1014,10 @@
 
         const summaryBtn = row.querySelector(".stream-bubble-summary");
         const commandList = row.querySelector(".stream-bubble-command-list");
-        if (summaryBtn instanceof HTMLElement) {
+        const hasCommandRecords =
+          commandList instanceof HTMLElement &&
+          commandList.querySelector(".stream-bubble-command-line");
+        if (summaryBtn instanceof HTMLElement && hasCommandRecords) {
           row.classList.add("has-stream-summary");
           if (commandList instanceof HTMLElement) {
             row.insertBefore(body, commandList);
@@ -918,6 +1025,13 @@
             summaryBtn.insertAdjacentElement("afterend", body);
           }
         } else {
+          if (summaryBtn instanceof HTMLElement) {
+            summaryBtn.remove();
+          }
+          if (commandList instanceof HTMLElement) {
+            commandList.remove();
+          }
+          row.classList.remove("has-stream-summary");
           row.appendChild(toggle);
           row.appendChild(body);
         }
@@ -925,6 +1039,8 @@
       }
 
       function appendAssistantByPhase(text, phase = "", timestamp = "") {
+        const parsed = extractMarkdownImages(text);
+        const renderText = parsed.text;
         const normalizedPhase = String(phase || "").trim();
         const phaseLabel = localizePhase(normalizedPhase);
         const metaText = `${t("roleAssistant")}${phaseLabel ? ` · ${phaseLabel}` : ""}${
@@ -932,9 +1048,13 @@
         }`;
 
         if (normalizedPhase && normalizedPhase !== "final_answer") {
-          return createProcessBlock(text, metaText, false, normalizedPhase);
+          const row = createProcessBlock(renderText, metaText, false, normalizedPhase);
+          appendMessageImageAttachments(row, parsed.images);
+          return row;
         }
-        return createAssistantPlainBlock(text, metaText, normalizedPhase || "final_answer");
+        const row = createAssistantPlainBlock(renderText, metaText, normalizedPhase || "final_answer");
+        appendMessageImageAttachments(row, parsed.images);
+        return row;
       }
 
       function groupMessagesForRender(messages) {
@@ -953,7 +1073,7 @@
         };
 
         for (const m of messages) {
-          if (m?.role !== "assistant") {
+          if (m?.role !== "assistant" || m?.type === "image") {
             flushPending();
             grouped.push(m);
             continue;
@@ -1028,27 +1148,92 @@
         contentEl.innerHTML = renderMessageHtml(text);
       }
 
-      function renderMessages(messages) {
+      function renderMessages(messages, options = {}) {
         streamingAssistantBubble = null;
+        const forceBottom = Boolean(options.forceBottom);
+        const preserveScroll = options.preserveScroll !== false;
+        const prevBottomGap = preserveScroll
+          ? Math.max(0, chat.scrollHeight - chat.scrollTop - chat.clientHeight)
+          : 0;
         if (!messages.length) {
           setEmpty(t("emptyNoMessages"));
           return;
         }
         const groupedMessages = groupMessagesForRender(messages);
         chat.innerHTML = "";
+        let lastBubbleContext = null;
         for (const m of groupedMessages) {
-          if (m.role === "user") {
-            appendMessage(
-              "user",
-              m.text,
-              `${t("roleUser")}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`
-            );
+          if (m?.type === "image") {
+            const canAttachToPrevious =
+              lastBubbleContext &&
+              lastBubbleContext.row instanceof HTMLElement &&
+              lastBubbleContext.role === m.role &&
+              String(lastBubbleContext.timestamp || "") === String(m.timestamp || "") &&
+              String(lastBubbleContext.phase || "") === String(m.phase || "");
+            if (canAttachToPrevious) {
+              appendMessageImageAttachments(lastBubbleContext.row, [
+                {
+                  url: String(m.imageUrl || ""),
+                  fileName: String(m.fileName || "attachment"),
+                },
+              ]);
+              continue;
+            }
+            const isAssistant = m.role === "assistant";
+            const phase = isAssistant ? String(m.phase || "").trim() : "";
+            const phaseLabel = isAssistant && phase ? localizePhase(phase) : "";
+            const metaText = isAssistant
+              ? `${t("roleAssistant")}${phaseLabel ? ` · ${phaseLabel}` : ""}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`
+              : `${t("roleUser")}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`;
+            const row = appendMessage(m.role, "", metaText, phase || "");
+            appendMessageImageAttachments(row, [
+              {
+                url: String(m.imageUrl || ""),
+                fileName: String(m.fileName || "attachment"),
+              },
+            ]);
+            lastBubbleContext = {
+              row,
+              role: m.role,
+              timestamp: m.timestamp || "",
+              phase: phase || "",
+            };
             continue;
           }
-          appendAssistantByPhase(m.text, m.phase, m.timestamp);
+          if (m.role === "user") {
+            const userText =
+              m.text && String(m.text).trim()
+                ? m.text
+                : "";
+            const userRow = appendMessage(
+              "user",
+              userText,
+              `${t("roleUser")}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`
+            );
+            lastBubbleContext = {
+              row: userRow,
+              role: "user",
+              timestamp: m.timestamp || "",
+              phase: "",
+            };
+            continue;
+          }
+          const assistantRow = appendAssistantByPhase(m.text, m.phase, m.timestamp);
+          lastBubbleContext = {
+            row: assistantRow,
+            role: "assistant",
+            timestamp: m.timestamp || "",
+            phase: String(m.phase || "").trim(),
+          };
         }
         refreshFinalDividers();
-        chat.scrollTop = chat.scrollHeight;
+        if (forceBottom || !preserveScroll) {
+          chat.scrollTop = chat.scrollHeight;
+        } else {
+          const maxTop = Math.max(0, chat.scrollHeight - chat.clientHeight);
+          const nextTop = Math.max(0, Math.min(maxTop, maxTop - prevBottomGap));
+          chat.scrollTop = nextTop;
+        }
         updateScrollToBottomButton();
       }
 
@@ -1258,7 +1443,7 @@
           addActivity(currentLang === "en" ? "Load messages failed" : "載入訊息失敗");
           return;
         }
-        renderMessages(data.messages || []);
+        renderMessages(data.messages || [], { forceBottom: true, preserveScroll: false });
         await loadStats(sessionId);
         addActivity(
           currentLang === "en"
@@ -1273,7 +1458,7 @@
         const res = await fetch(`/api/sessions/${sessionId}/messages`);
         const data = await res.json();
         if (!res.ok) return;
-        renderMessages(data.messages || []);
+        renderMessages(data.messages || [], { preserveScroll: true });
       }
 
       async function syncMessagesForce(sessionId) {
@@ -1288,12 +1473,12 @@
           )
         );
         const serverHasFinalAssistant = incoming.some(
-          (m) => m?.role === "assistant" && String(m?.phase || "").trim() === "final_answer"
+          (m) => m?.role === "assistant" && m?.type !== "image" && String(m?.phase || "").trim() === "final_answer"
         );
         // Protect against race: if UI already has a streamed final answer but
         // server persistence lags behind, don't overwrite with older state.
         if (domHasFinalAssistant && !serverHasFinalAssistant) return;
-        renderMessages(incoming);
+        renderMessages(incoming, { preserveScroll: true });
       }
 
       async function syncMessagesWithRetry(sessionId, retries = 3, delayMs = 300) {
@@ -1305,6 +1490,84 @@
           }
         }
       }
+
+      function appendMessageImageAttachments(rowEl, images) {
+        if (!(rowEl instanceof HTMLElement) || !Array.isArray(images) || images.length === 0) return;
+        const bubble = rowEl.classList.contains("bubble") ? rowEl : rowEl.querySelector(".bubble");
+        const plainRow =
+          bubble ? null : rowEl.classList.contains("assistant-plain")
+            ? rowEl
+            : rowEl.querySelector(".row.assistant.assistant-plain");
+        const processBody =
+          bubble || plainRow
+            ? null
+            : rowEl.classList.contains("assistant-process-body")
+              ? rowEl
+              : rowEl.querySelector(".assistant-process-body");
+        if (!(bubble instanceof HTMLElement) && !(plainRow instanceof HTMLElement) && !(processBody instanceof HTMLElement)) {
+          return;
+        }
+
+        const host =
+          bubble instanceof HTMLElement
+            ? bubble
+            : plainRow instanceof HTMLElement
+              ? plainRow
+              : processBody instanceof HTMLElement
+                ? processBody
+                : null;
+        if (!(host instanceof HTMLElement)) return;
+        let wrap = host.querySelector(":scope > .message-image-attachments");
+        if (!(wrap instanceof HTMLElement)) {
+          wrap = document.createElement("div");
+          wrap.className = "message-image-attachments";
+          wrap.style.display = "flex";
+          wrap.style.flexWrap = "wrap";
+          wrap.style.gap = "8px";
+          wrap.style.marginTop = "8px";
+        }
+
+        for (const img of images) {
+          const src = String(img?.url || img?.previewUrl || "").trim();
+          if (!src) continue;
+          const thumb = document.createElement("img");
+          thumb.src = src;
+          thumb.alt = String(img?.fileName || "attachment");
+          thumb.className = "inline-image";
+          thumb.loading = "lazy";
+          thumb.style.width = "96px";
+          thumb.style.height = "96px";
+          thumb.style.objectFit = "cover";
+          thumb.style.borderRadius = "8px";
+          thumb.style.cursor = "zoom-in";
+          wrap.appendChild(thumb);
+        }
+
+        if (wrap.childElementCount > 0) {
+          if (bubble instanceof HTMLElement) {
+            const metaEl = bubble.querySelector(".meta");
+            if (metaEl instanceof HTMLElement && wrap.parentElement !== bubble) {
+              bubble.insertBefore(wrap, metaEl);
+            } else if (wrap.parentElement !== bubble) {
+              bubble.appendChild(wrap);
+            }
+            return;
+          }
+          if (plainRow instanceof HTMLElement) {
+            const metaEl = plainRow.querySelector(".meta");
+            if (metaEl instanceof HTMLElement && wrap.parentElement !== plainRow) {
+              plainRow.insertBefore(wrap, metaEl);
+            } else if (wrap.parentElement !== plainRow) {
+              plainRow.appendChild(wrap);
+            }
+            return;
+          }
+          if (processBody instanceof HTMLElement && wrap.parentElement !== processBody) {
+            processBody.appendChild(wrap);
+          }
+        }
+      }
+
 
       async function recoverAfterStreamInterruption(sessionId) {
         if (!sessionId) return false;
@@ -1344,9 +1607,11 @@
           tail.unshift(msg);
         }
         if (!tail.length) return;
+        const textTail = tail.filter((m) => m?.type !== "image");
+        if (!textTail.length) return;
 
-        const processItems = tail.filter((m) => String(m?.phase || "").trim() !== "final_answer");
-        const finalItems = tail.filter((m) => String(m?.phase || "").trim() === "final_answer");
+        const processItems = textTail.filter((m) => String(m?.phase || "").trim() !== "final_answer");
+        const finalItems = textTail.filter((m) => String(m?.phase || "").trim() === "final_answer");
         if (!processItems.length || !finalItems.length) return;
 
         const firstProcess = processItems[0];
@@ -1408,18 +1673,23 @@
         setSendingState(true);
         setStatus(t("statusSending"));
         addActivity(currentLang === "en" ? "Sending prompt to Codex..." : "正在送出訊息到 Codex...");
-        let syncTimer = null;
         let gotStreamEvent = false;
         let streamDone = false;
         let stallTimer = null;
-        const promptWithImages = buildPromptWithImages(prompt, imagesToSend);
-        const imagePreviewMarkdown = imagesToSend.length
-          ? `\n\n${imagesToSend
-              .map((img, i) => `![${img.fileName || `image-${i + 1}`}](${img.url})`)
-              .join("\n")}`
-          : "";
-
-        appendMessage("user", `${prompt}${imagePreviewMarkdown}`, t("userNow"));
+        const promptForModel = String(prompt || "");
+        const imageAbsolutePaths = imagesToSend
+          .map((img) => String(img?.absolutePath || "").trim())
+          .filter(Boolean);
+        const userText =
+          prompt && prompt.trim()
+            ? prompt
+            : imagesToSend.length > 0
+              ? currentLang === "en"
+                ? "[Image attachment]"
+                : "[圖片附件]"
+              : "";
+        const userRow = appendMessage("user", userText, t("userNow"));
+        appendMessageImageAttachments(userRow, imagesToSend);
         streamingAssistantBubble = appendMessage(
           "assistant",
           t("thinkingWord"),
@@ -1442,7 +1712,7 @@
           stallTimer = setInterval(() => {
             // Network can silently stall while the UI remains in "thinking...".
             // Abort and force a sync fallback so the final answer can still appear.
-            if (Date.now() - lastChunkAt > 15000) {
+            if (Date.now() - lastChunkAt > 90000) {
               abortController.abort("stream_stalled");
             }
           }, 2000);
@@ -1452,8 +1722,9 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               sessionId: selectedSessionId,
-              prompt: promptWithImages,
+              prompt: promptForModel,
               model: currentModel || null,
+              images: imageAbsolutePaths,
             }),
             signal: abortController.signal,
           });
@@ -1465,7 +1736,7 @@
                 ? "Stream unsupported on this browser. Falling back..."
                 : "此瀏覽器不支援串流，改用一般傳送..."
             );
-            await sendWithoutStream(promptWithImages);
+            await sendWithoutStream(promptForModel);
             setStatus(t("statusDone"));
             return;
           }
@@ -1474,12 +1745,6 @@
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
-
-          syncTimer = setInterval(async () => {
-            if (!gotStreamEvent && selectedSessionId) {
-              await syncMessagesNoFlicker(selectedSessionId);
-            }
-          }, 1200);
 
           while (true) {
             const { done, value } = await reader.read();
@@ -1513,6 +1778,10 @@
                 );
                 addActivity(statusLine);
                 showActivityBubble(statusLine, true);
+                continue;
+              }
+              if (event.type === "heartbeat") {
+                gotStreamEvent = true;
                 continue;
               }
               if (event.type === "activity") {
@@ -1561,7 +1830,7 @@
               if (event.type === "done") {
                 streamDone = true;
                 setStatus(t("statusDone"));
-                collapseCommandLogs();
+                scheduleCollapseCommandLogs(3500);
                 if (selectedSessionId) {
                   await reconcileAssistantSplitFromSession(selectedSessionId);
                 }
@@ -1588,7 +1857,7 @@
               } else if (event.type === "done") {
                 streamDone = true;
                 setStatus(t("statusDone"));
-                collapseCommandLogs();
+                scheduleCollapseCommandLogs(3500);
                 if (selectedSessionId) {
                   await reconcileAssistantSplitFromSession(selectedSessionId);
                 }
@@ -1598,6 +1867,9 @@
             } catch {
               // ignore trailing partial json line
             }
+          }
+          if (!streamDone) {
+            throw new Error("stream_incomplete");
           }
 
           if (selectedSessionId) {
@@ -1630,9 +1902,11 @@
             isAbortError ||
             (typeof error === "string" && error === "stream_stalled") ||
             (error instanceof Error && error.message.includes("stream_stalled"));
+          const isIncompleteStream =
+            error instanceof Error && error.message.includes("stream_incomplete");
 
           let recovered = false;
-          if (selectedSessionId && (isStallAbort || gotStreamEvent || !streamDone)) {
+          if (selectedSessionId && (isStallAbort || isIncompleteStream || gotStreamEvent || !streamDone)) {
             recovered = await recoverAfterStreamInterruption(selectedSessionId);
           }
 
@@ -1654,7 +1928,6 @@
             hideActivityBubble(1200);
           }
         } finally {
-          if (syncTimer) clearInterval(syncTimer);
           if (stallTimer) clearInterval(stallTimer);
           setSendingState(false);
           resetLiveStream();
@@ -1724,7 +1997,13 @@
         }
         const img = e.target.closest(".inline-image");
         if (!(img instanceof HTMLImageElement)) return;
-        openImageViewer(img.src, img.alt || "preview");
+        const wrap = img.closest(".message-image-attachments");
+        const siblings = wrap ? Array.from(wrap.querySelectorAll(".inline-image")) : [img];
+        const gallery = siblings
+          .filter((item) => item instanceof HTMLImageElement)
+          .map((item) => ({ src: item.src, alt: item.alt || "preview" }));
+        const currentIndex = Math.max(0, siblings.indexOf(img));
+        openImageViewer(img.src, img.alt || "preview", gallery, currentIndex);
       });
       chat.addEventListener("scroll", updateScrollToBottomButton);
       scrollToBottomBtn?.addEventListener("click", () => {
@@ -1733,12 +2012,25 @@
       });
 
       imageViewerClose.addEventListener("click", closeImageViewer);
+      imageViewerPrev?.addEventListener("click", () => navigateImageViewer(-1));
+      imageViewerNext?.addEventListener("click", () => navigateImageViewer(1));
       imageViewer.addEventListener("click", (e) => {
         if (e.target === imageViewer) closeImageViewer();
       });
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && imageViewer.classList.contains("open")) {
           closeImageViewer();
+          return;
+        }
+        if (!imageViewer.classList.contains("open")) return;
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          navigateImageViewer(-1);
+          return;
+        }
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          navigateImageViewer(1);
         }
       });
 
