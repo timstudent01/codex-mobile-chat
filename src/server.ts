@@ -287,6 +287,16 @@ const truncateForActivity = (text: string, max = 120): string => {
   return normalized.length > max ? `${normalized.slice(0, max - 3)}...` : normalized;
 };
 
+const isReconnectHeaderDecodeNoise = (message: string): boolean => {
+  const normalized = String(message || "").toLowerCase();
+  return (
+    normalized.includes("reconnecting") &&
+    normalized.includes("stream disconnected before completion") &&
+    normalized.includes("x-codex-turn-metadata") &&
+    normalized.includes("failed to convert header to a str")
+  );
+};
+
 const parseJsonObject = (raw: unknown): Record<string, unknown> | null => {
   if (typeof raw !== "string" || !raw.trim()) return null;
   try {
@@ -414,6 +424,9 @@ const summarizeCodexEvent = (
           ? row.error.message.trim()
           : "";
     if (!message) return null;
+    // Suppress repeated reconnect noise from codex transport internals.
+    // We'll surface a single final error if the turn eventually fails.
+    if (isReconnectHeaderDecodeNoise(message)) return null;
     return { code: "error_event", text: `Error: ${truncateForActivity(message, 220)}` };
   }
   return null;
@@ -784,6 +797,7 @@ app.post("/api/chat/stream", async (c) => {
       const encoder = new TextEncoder();
       const toolNameByCallId = new Map<string, string>();
       let lastCodexErrorMessage = "";
+      let sawReconnectHeaderDecodeNoise = false;
       let lastAssistantPhase = "";
       const push = (event: Record<string, unknown>) => {
         if (streamClosed) return false;
@@ -795,7 +809,6 @@ app.post("/api/chat/stream", async (c) => {
           return false;
         }
       };
-      const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
       const pushAssistantChunked = async (text: string) => {
         const normalized = text.trim();
         if (!normalized) return;
@@ -808,15 +821,13 @@ app.post("/api/chat/stream", async (c) => {
         if (lines.length > 1) {
           for (const line of lines) {
             push({ type: "assistant", text: line });
-            await delay(40);
           }
           return;
         }
 
-        const chunkSize = 24;
+        const chunkSize = 120;
         for (let i = 0; i < normalized.length; i += chunkSize) {
           push({ type: "assistant", text: normalized.slice(i, i + chunkSize) });
-          await delay(30);
         }
       };
 
@@ -888,6 +899,9 @@ app.post("/api/chat/stream", async (c) => {
                       ? row.error.message.trim()
                       : "";
                 if (message) {
+                  if (isReconnectHeaderDecodeNoise(message)) {
+                    sawReconnectHeaderDecodeNoise = true;
+                  }
                   lastCodexErrorMessage = message;
                 }
               }
@@ -954,6 +968,9 @@ app.post("/api/chat/stream", async (c) => {
           push({
             type: "error",
             message:
+              (sawReconnectHeaderDecodeNoise
+                ? "Network stream decode error detected during reconnect attempts. Please check network stability/VPN path and retry."
+                : "") ||
               lastCodexErrorMessage ||
               stderrText.trim() ||
               `codex exited with code ${exitCode}`,

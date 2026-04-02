@@ -1281,7 +1281,19 @@
         const res = await fetch(`/api/sessions/${sessionId}/messages`);
         const data = await res.json();
         if (!res.ok) return;
-        renderMessages(data.messages || []);
+        const incoming = Array.isArray(data.messages) ? data.messages : [];
+        const domHasFinalAssistant = Boolean(
+          chat.querySelector(
+            '.row.assistant[data-phase="final_answer"], .row.assistant.assistant-plain[data-phase="final_answer"]'
+          )
+        );
+        const serverHasFinalAssistant = incoming.some(
+          (m) => m?.role === "assistant" && String(m?.phase || "").trim() === "final_answer"
+        );
+        // Protect against race: if UI already has a streamed final answer but
+        // server persistence lags behind, don't overwrite with older state.
+        if (domHasFinalAssistant && !serverHasFinalAssistant) return;
+        renderMessages(incoming);
       }
 
       async function syncMessagesWithRetry(sessionId, retries = 3, delayMs = 300) {
@@ -1291,6 +1303,20 @@
           if (i < retries - 1) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
           }
+        }
+      }
+
+      async function recoverAfterStreamInterruption(sessionId) {
+        if (!sessionId) return false;
+        try {
+          await loadSessions();
+          picker.value = sessionId;
+          await syncMessagesWithRetry(sessionId, 3, 300);
+          await loadStats(sessionId);
+          await reconcileAssistantSplitFromSession(sessionId);
+          return true;
+        } catch {
+          return false;
         }
       }
 
@@ -1384,6 +1410,8 @@
         addActivity(currentLang === "en" ? "Sending prompt to Codex..." : "正在送出訊息到 Codex...");
         let syncTimer = null;
         let gotStreamEvent = false;
+        let streamDone = false;
+        let stallTimer = null;
         const promptWithImages = buildPromptWithImages(prompt, imagesToSend);
         const imagePreviewMarkdown = imagesToSend.length
           ? `\n\n${imagesToSend
@@ -1400,6 +1428,25 @@
         initLiveStream();
 
         try {
+          const abortController = new AbortController();
+          let lastChunkAt = Date.now();
+          const touchStream = () => {
+            lastChunkAt = Date.now();
+          };
+          const stopWatchdog = () => {
+            if (stallTimer) {
+              clearInterval(stallTimer);
+              stallTimer = null;
+            }
+          };
+          stallTimer = setInterval(() => {
+            // Network can silently stall while the UI remains in "thinking...".
+            // Abort and force a sync fallback so the final answer can still appear.
+            if (Date.now() - lastChunkAt > 15000) {
+              abortController.abort("stream_stalled");
+            }
+          }, 2000);
+
           const res = await fetch("/api/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1408,6 +1455,7 @@
               prompt: promptWithImages,
               model: currentModel || null,
             }),
+            signal: abortController.signal,
           });
           if (!res.ok) throw new Error("Stream failed");
 
@@ -1436,6 +1484,7 @@
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            touchStream();
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split(/\r?\n/);
             buffer = lines.pop() || "";
@@ -1510,6 +1559,7 @@
                 throw new Error(errMsg);
               }
               if (event.type === "done") {
+                streamDone = true;
                 setStatus(t("statusDone"));
                 collapseCommandLogs();
                 if (selectedSessionId) {
@@ -1536,6 +1586,7 @@
                 if (text) addActivity(text);
                 if (rawText) appendStreamActivity(rawText);
               } else if (event.type === "done") {
+                streamDone = true;
                 setStatus(t("statusDone"));
                 collapseCommandLogs();
                 if (selectedSessionId) {
@@ -1550,26 +1601,61 @@
           }
 
           if (selectedSessionId) {
-            await loadSessions();
-            picker.value = selectedSessionId;
-            await syncMessagesWithRetry(selectedSessionId, 3, 300);
-            await loadStats(selectedSessionId);
-            setTimeout(() => {
-              loadSessions().catch(() => {});
-              syncMessagesWithRetry(selectedSessionId, 2, 350).catch(() => {});
-            }, 1500);
+            const bgSessionId = selectedSessionId;
+            // Do post-stream sync in background so UI exits "thinking" immediately.
+            void (async () => {
+              await new Promise((resolve) => setTimeout(resolve, 900));
+              await loadSessions();
+              picker.value = bgSessionId;
+              await syncMessagesWithRetry(bgSessionId, 5, 400);
+              await loadStats(bgSessionId);
+              setTimeout(() => {
+                loadSessions().catch(() => {});
+                syncMessagesWithRetry(bgSessionId, 3, 500).catch(() => {});
+              }, 1500);
+            })();
           }
+          stopWatchdog();
           setStatus(t("statusReady"));
         } catch (error) {
-          setStatus(error instanceof Error ? error.message : "Unknown error");
-          addActivity(
-            currentLang === "en"
-              ? `Error: ${error instanceof Error ? error.message : "Unknown error"}`
-              : `錯誤：${error instanceof Error ? error.message : "未知錯誤"}`
-          );
-          hideActivityBubble(1200);
+          if (stallTimer) {
+            clearInterval(stallTimer);
+            stallTimer = null;
+          }
+
+          const isAbortError =
+            (error instanceof DOMException && error.name === "AbortError") ||
+            (error instanceof Error && error.name === "AbortError");
+          const isStallAbort =
+            isAbortError ||
+            (typeof error === "string" && error === "stream_stalled") ||
+            (error instanceof Error && error.message.includes("stream_stalled"));
+
+          let recovered = false;
+          if (selectedSessionId && (isStallAbort || gotStreamEvent || !streamDone)) {
+            recovered = await recoverAfterStreamInterruption(selectedSessionId);
+          }
+
+          if (recovered) {
+            setStatus(t("statusReady"));
+            addActivity(
+              currentLang === "en"
+                ? "Stream interrupted; synced latest messages from server."
+                : "串流中斷，已從伺服器同步最新訊息。"
+            );
+            hideActivityBubble(900);
+          } else {
+            setStatus(error instanceof Error ? error.message : "Unknown error");
+            addActivity(
+              currentLang === "en"
+                ? `Error: ${error instanceof Error ? error.message : "Unknown error"}`
+                : `錯誤：${error instanceof Error ? error.message : "未知錯誤"}`
+            );
+            hideActivityBubble(1200);
+          }
         } finally {
           if (syncTimer) clearInterval(syncTimer);
+          if (stallTimer) clearInterval(stallTimer);
           setSendingState(false);
           resetLiveStream();
           streamingAssistantBubble = null;
