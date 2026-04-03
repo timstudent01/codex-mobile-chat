@@ -6,6 +6,7 @@
       CHAT_STATUS: "/api/chat/status",
       CHAT_STREAM: "/api/chat/stream",
       UPLOADS: "/api/uploads",
+      I18N_MAP: "/api/i18n-map",
       SESSION_MESSAGES: (sessionId) => `/api/sessions/${sessionId}/messages`,
       SESSION_STATS: (sessionId) => `/api/sessions/${sessionId}/stats`,
       SESSION_CHAT: (sessionId) => `/api/sessions/${sessionId}/chat`,

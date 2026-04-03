@@ -16,6 +16,7 @@ import {
   CHAT_STREAM_EVENT,
   CHAT_STREAM_STATUS,
 } from "./constants/chat-stream";
+import { CHAT_I18N_MAP } from "./shared/chat-i18n-map";
 
 const app = new Hono();
 const activeSessionRuns = new Map<string, number>();
@@ -589,6 +590,10 @@ app.get("/api/models", async (c) => {
   }
 });
 
+app.get("/api/i18n-map", (c) => {
+  return c.json({ map: CHAT_I18N_MAP });
+});
+
 app.get("/api/sessions/:sessionId/messages", async (c) => {
   const sessionId = c.req.param("sessionId");
   try {
@@ -771,24 +776,22 @@ app.post("/api/chat/stream", async (c) => {
         push({ type: CHAT_STREAM_EVENT.HEARTBEAT, at: Date.now() });
       }, 5000);
       const pushAssistantChunked = async (text: string) => {
-        const normalized = text.trim();
-        if (!normalized) return;
+        const raw = String(text ?? "").replace(/\r/g, "");
+        if (!raw.trim()) return;
 
-        const lines = normalized
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean);
-
+        const lines = raw.split("\n");
         if (lines.length > 1) {
-          for (const line of lines) {
-            push({ type: CHAT_STREAM_EVENT.ASSISTANT, text: line });
+          for (let i = 0; i < lines.length; i += 1) {
+            const line = lines[i] ?? "";
+            const withLineBreak = i < lines.length - 1 ? `${line}\n` : line;
+            push({ type: CHAT_STREAM_EVENT.ASSISTANT, text: withLineBreak });
           }
           return;
         }
 
         const chunkSize = 120;
-        for (let i = 0; i < normalized.length; i += chunkSize) {
-          push({ type: CHAT_STREAM_EVENT.ASSISTANT, text: normalized.slice(i, i + chunkSize) });
+        for (let i = 0; i < raw.length; i += chunkSize) {
+          push({ type: CHAT_STREAM_EVENT.ASSISTANT, text: raw.slice(i, i + chunkSize) });
         }
       };
 

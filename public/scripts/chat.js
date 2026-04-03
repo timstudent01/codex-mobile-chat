@@ -46,6 +46,7 @@
       let streamingAssistantBubble = null;
       let currentLang = localStorage.getItem("chat_lang") || "zh";
       const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
+      const DEFAULT_FALLBACK_MODEL = "gpt-5.3-codex";
       const CHAT_CONSTANTS = window.ChatConstants || {};
       const CHAT_API = CHAT_CONSTANTS.API || {};
       const CHAT_STREAM_EVENT = CHAT_CONSTANTS.STREAM_EVENT || {};
@@ -57,6 +58,165 @@
       const CHAT_POLL = CHAT_CONSTANTS.POLL || {};
       const CHAT_SELECTOR = CHAT_CONSTANTS.CSS_SELECTOR || {};
       const CHAT_IMAGE_PLACEHOLDER = CHAT_CONSTANTS.IMAGE_PLACEHOLDER || {};
+      const CHAT_I18N_RUNTIME = window.ChatI18nRuntime || {};
+      const CHAT_STREAM_DISPATCHER = window.ChatStreamDispatcher || {};
+      const CHAT_STREAM_STATE_UTILS = window.ChatStreamStateUtils || {};
+      const CHAT_MESSAGE_RENDERER_UTILS = window.ChatMessageRendererUtils || {};
+      const CHAT_BOOTSTRAP_EVENTS_UTILS = window.ChatBootstrapEventsUtils || {};
+      const CHAT_BOOTSTRAP_INIT_UTILS = window.ChatBootstrapInitUtils || {};
+      const CHAT_STREAM_ORCHESTRATOR_UTILS = window.ChatStreamOrchestratorUtils || {};
+      const CHAT_UI_UTILS = window.ChatUiUtils || {};
+      const CHAT_SESSION_UI_UTILS = window.ChatSessionUiUtils || {};
+      const CHAT_IMAGE_VIEWER_UTILS = window.ChatImageViewerUtils || {};
+      const CHAT_FORMAT_UTILS = window.ChatFormatUtils || {};
+      const CHAT_RETRY_UTILS = window.ChatRetryUtils || {};
+      const CHAT_API_UTILS = window.ChatApiUtils || {};
+      const normalizeI18nMapPayloadApi =
+        typeof CHAT_I18N_RUNTIME.normalizeI18nMapPayload === "function"
+          ? CHAT_I18N_RUNTIME.normalizeI18nMapPayload
+          : null;
+      const localizePhaseApi =
+        typeof CHAT_I18N_RUNTIME.localizePhase === "function" ? CHAT_I18N_RUNTIME.localizePhase : null;
+      const localizeStatusApi =
+        typeof CHAT_I18N_RUNTIME.localizeStatus === "function" ? CHAT_I18N_RUNTIME.localizeStatus : null;
+      const formatActivityEventApi =
+        typeof CHAT_I18N_RUNTIME.formatActivityEvent === "function"
+          ? CHAT_I18N_RUNTIME.formatActivityEvent
+          : null;
+      const createStreamDispatcherApi =
+        typeof CHAT_STREAM_DISPATCHER.createStreamDispatcher === "function"
+          ? CHAT_STREAM_DISPATCHER.createStreamDispatcher
+          : null;
+      const resetLiveStreamApi =
+        typeof CHAT_STREAM_STATE_UTILS.resetLiveStream === "function"
+          ? CHAT_STREAM_STATE_UTILS.resetLiveStream
+          : null;
+      const initLiveStreamApi =
+        typeof CHAT_STREAM_STATE_UTILS.initLiveStream === "function"
+          ? CHAT_STREAM_STATE_UTILS.initLiveStream
+          : null;
+      const appendStreamNoteApi =
+        typeof CHAT_STREAM_STATE_UTILS.appendStreamNote === "function"
+          ? CHAT_STREAM_STATE_UTILS.appendStreamNote
+          : null;
+      const updateLiveAssistantPhaseApi =
+        typeof CHAT_STREAM_STATE_UTILS.updateLiveAssistantPhase === "function"
+          ? CHAT_STREAM_STATE_UTILS.updateLiveAssistantPhase
+          : null;
+      const splitLiveAssistantBubbleApi =
+        typeof CHAT_STREAM_STATE_UTILS.splitLiveAssistantBubble === "function"
+          ? CHAT_STREAM_STATE_UTILS.splitLiveAssistantBubble
+          : null;
+      const createProcessBlockApi =
+        typeof CHAT_MESSAGE_RENDERER_UTILS.createProcessBlock === "function"
+          ? CHAT_MESSAGE_RENDERER_UTILS.createProcessBlock
+          : null;
+      const createAssistantPlainBlockApi =
+        typeof CHAT_MESSAGE_RENDERER_UTILS.createAssistantPlainBlock === "function"
+          ? CHAT_MESSAGE_RENDERER_UTILS.createAssistantPlainBlock
+          : null;
+      const groupMessagesForRenderApi =
+        typeof CHAT_MESSAGE_RENDERER_UTILS.groupMessagesForRender === "function"
+          ? CHAT_MESSAGE_RENDERER_UTILS.groupMessagesForRender
+          : null;
+      const ensureProcessFinalDividerApi =
+        typeof CHAT_MESSAGE_RENDERER_UTILS.ensureProcessFinalDivider === "function"
+          ? CHAT_MESSAGE_RENDERER_UTILS.ensureProcessFinalDivider
+          : null;
+      const refreshFinalDividersApi =
+        typeof CHAT_MESSAGE_RENDERER_UTILS.refreshFinalDividers === "function"
+          ? CHAT_MESSAGE_RENDERER_UTILS.refreshFinalDividers
+          : null;
+      const setBubbleTextApi =
+        typeof CHAT_MESSAGE_RENDERER_UTILS.setBubbleText === "function"
+          ? CHAT_MESSAGE_RENDERER_UTILS.setBubbleText
+          : null;
+      const bindBootstrapEventsApi =
+        typeof CHAT_BOOTSTRAP_EVENTS_UTILS.bindBootstrapEvents === "function"
+          ? CHAT_BOOTSTRAP_EVENTS_UTILS.bindBootstrapEvents
+          : null;
+      const runBootstrapApi =
+        typeof CHAT_BOOTSTRAP_INIT_UTILS.runBootstrap === "function"
+          ? CHAT_BOOTSTRAP_INIT_UTILS.runBootstrap
+          : null;
+      const sendWithoutStreamApi =
+        typeof CHAT_STREAM_ORCHESTRATOR_UTILS.sendWithoutStream === "function"
+          ? CHAT_STREAM_ORCHESTRATOR_UTILS.sendWithoutStream
+          : null;
+      const recoverAfterStreamInterruptionApi =
+        typeof CHAT_STREAM_ORCHESTRATOR_UTILS.recoverAfterStreamInterruption === "function"
+          ? CHAT_STREAM_ORCHESTRATOR_UTILS.recoverAfterStreamInterruption
+          : null;
+      const reconcileAssistantSplitFromSessionApi =
+        typeof CHAT_STREAM_ORCHESTRATOR_UTILS.reconcileAssistantSplitFromSession === "function"
+          ? CHAT_STREAM_ORCHESTRATOR_UTILS.reconcileAssistantSplitFromSession
+          : null;
+      const escapeHtmlApi =
+        typeof CHAT_UI_UTILS.escapeHtml === "function" ? CHAT_UI_UTILS.escapeHtml : null;
+      const renderMessageHtmlApi =
+        typeof CHAT_UI_UTILS.renderMessageHtml === "function" ? CHAT_UI_UTILS.renderMessageHtml : null;
+      const extractMarkdownImagesApi =
+        typeof CHAT_UI_UTILS.extractMarkdownImages === "function"
+          ? CHAT_UI_UTILS.extractMarkdownImages
+          : null;
+      const setSummaryButtonTextApi =
+        typeof CHAT_UI_UTILS.setSummaryButtonText === "function"
+          ? CHAT_UI_UTILS.setSummaryButtonText
+          : null;
+      const renderSessionListApi =
+        typeof CHAT_SESSION_UI_UTILS.renderSessionList === "function"
+          ? CHAT_SESSION_UI_UTILS.renderSessionList
+          : null;
+      const renderAttachmentsApi =
+        typeof CHAT_SESSION_UI_UTILS.renderAttachments === "function"
+          ? CHAT_SESSION_UI_UTILS.renderAttachments
+          : null;
+      const createImageViewerControllerApi =
+        typeof CHAT_IMAGE_VIEWER_UTILS.createImageViewerController === "function"
+          ? CHAT_IMAGE_VIEWER_UTILS.createImageViewerController
+          : null;
+      const formatClockApi =
+        typeof CHAT_FORMAT_UTILS.formatClock === "function" ? CHAT_FORMAT_UTILS.formatClock : null;
+      const formatTsApi =
+        typeof CHAT_FORMAT_UTILS.formatTs === "function" ? CHAT_FORMAT_UTILS.formatTs : null;
+      const formatNumberApi =
+        typeof CHAT_FORMAT_UTILS.formatNumber === "function" ? CHAT_FORMAT_UTILS.formatNumber : null;
+      const formatRunLineApi =
+        typeof CHAT_FORMAT_UTILS.formatRunLine === "function" ? CHAT_FORMAT_UTILS.formatRunLine : null;
+      const delayMsApi =
+        typeof CHAT_RETRY_UTILS.delayMs === "function" ? CHAT_RETRY_UTILS.delayMs : null;
+      const getRetryBackoffMsApi =
+        typeof CHAT_RETRY_UTILS.getRetryBackoffMs === "function"
+          ? CHAT_RETRY_UTILS.getRetryBackoffMs
+          : null;
+      const isRetryableStreamErrorApi =
+        typeof CHAT_RETRY_UTILS.isRetryableStreamError === "function"
+          ? CHAT_RETRY_UTILS.isRetryableStreamError
+          : null;
+      const fetchModelsApi =
+        typeof CHAT_API_UTILS.fetchModels === "function" ? CHAT_API_UTILS.fetchModels : null;
+      const fetchI18nMapApi =
+        typeof CHAT_API_UTILS.fetchI18nMap === "function" ? CHAT_API_UTILS.fetchI18nMap : null;
+      const uploadImageApi =
+        typeof CHAT_API_UTILS.uploadImage === "function" ? CHAT_API_UTILS.uploadImage : null;
+      const fetchSessionsApi =
+        typeof CHAT_API_UTILS.fetchSessions === "function" ? CHAT_API_UTILS.fetchSessions : null;
+      const fetchSessionMessagesApi =
+        typeof CHAT_API_UTILS.fetchSessionMessages === "function"
+          ? CHAT_API_UTILS.fetchSessionMessages
+          : null;
+      const fetchSessionStatsApi =
+        typeof CHAT_API_UTILS.fetchSessionStats === "function"
+          ? CHAT_API_UTILS.fetchSessionStats
+          : null;
+      const fetchChatStatusApi =
+        typeof CHAT_API_UTILS.fetchChatStatus === "function" ? CHAT_API_UTILS.fetchChatStatus : null;
+      const sendChatNonStreamApi =
+        typeof CHAT_API_UTILS.sendChatNonStream === "function"
+          ? CHAT_API_UTILS.sendChatNonStream
+          : null;
+      const openChatStreamApi =
+        typeof CHAT_API_UTILS.openChatStream === "function" ? CHAT_API_UTILS.openChatStream : null;
       const STREAM_EVENT_STATUS = CHAT_STREAM_EVENT.STATUS || "status";
       const STREAM_EVENT_HEARTBEAT = CHAT_STREAM_EVENT.HEARTBEAT || "heartbeat";
       const STREAM_EVENT_ACTIVITY = CHAT_STREAM_EVENT.ACTIVITY || "activity";
@@ -82,6 +242,15 @@
       const ERROR_TOKEN_FAILED_TO_FETCH = CHAT_ERROR_TOKEN.FAILED_TO_FETCH || "failed to fetch";
       const ERROR_TOKEN_TIMEOUT = CHAT_ERROR_TOKEN.TIMEOUT || "timeout";
       const ERROR_TOKEN_ABORTED = CHAT_ERROR_TOKEN.ABORTED || "aborted";
+      const STREAM_RETRY_ERROR_TOKENS = [
+        ERROR_TOKEN_STREAM_STALLED,
+        ERROR_TOKEN_STREAM_INCOMPLETE,
+        ERROR_TOKEN_STREAM_FAILED,
+        ERROR_TOKEN_NETWORK_ERROR,
+        ERROR_TOKEN_FAILED_TO_FETCH,
+        ERROR_TOKEN_TIMEOUT,
+        ERROR_TOKEN_ABORTED,
+      ];
       const STREAM_RETRY_MAX_ATTEMPTS = Number(CHAT_RETRY.STREAM_MAX_ATTEMPTS || 2);
       const STREAM_RETRY_BASE_DELAY_MS = Number(CHAT_RETRY.STREAM_BASE_DELAY_MS || 600);
       const STREAM_RETRY_MAX_DELAY_MS = Number(CHAT_RETRY.STREAM_MAX_DELAY_MS || 1800);
@@ -110,8 +279,12 @@
       let commandCollapseTimer = null;
       let liveStreamState = null;
       let modelLoadingFailed = false;
-      let imageViewerGallery = [];
-      let imageViewerIndex = 0;
+      let imageViewerController = null;
+      let runtimeI18nMap = {
+        phase: {},
+        status: {},
+        activityCode: {},
+      };
 
       function normalizeModelValue(value) {
         if (typeof value !== "string") return "";
@@ -130,19 +303,23 @@
         modelPicker.innerHTML = optionsHtml;
       }
 
+      function parseModelOptionsPayload(data) {
+        const rawModels = Array.isArray(data?.models) ? data.models : [];
+        return rawModels
+          .map((item) => {
+            const value = normalizeModelValue(item?.value);
+            if (!value) return null;
+            return { value, label: String(item?.label || value) };
+          })
+          .filter(Boolean);
+      }
+
       async function loadModelOptions() {
+        let loadedFromApi = true;
         try {
-          const res = await fetch(CHAT_API.MODELS || "/api/models");
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Failed to load model list");
-          const rawModels = Array.isArray(data.models) ? data.models : [];
-          const parsed = rawModels
-            .map((item) => {
-              const value = normalizeModelValue(item?.value);
-              if (!value) return null;
-              return { value, label: String(item?.label || value) };
-            })
-            .filter(Boolean);
+          if (!fetchModelsApi) throw new Error("ChatApiUtils.fetchModels unavailable");
+          const data = await fetchModelsApi(CHAT_API);
+          const parsed = parseModelOptionsPayload(data);
           availableModels = parsed;
 
           const defaultModel = normalizeModelValue(data.defaultModel);
@@ -161,11 +338,37 @@
             ];
           }
         } catch {
+          loadedFromApi = false;
           availableModels = currentModel
             ? [{ value: currentModel, label: `${currentModel} (custom)` }]
-            : [];
+            : [{ value: DEFAULT_FALLBACK_MODEL, label: DEFAULT_FALLBACK_MODEL }];
+          if (!currentModel) {
+            currentModel = availableModels[0]?.value || "";
+            if (currentModel) localStorage.setItem("chat_model", currentModel);
+          }
         } finally {
           renderModelPicker();
+        }
+        return loadedFromApi;
+      }
+
+      async function loadI18nMap() {
+        try {
+          if (!fetchI18nMapApi) return;
+          const data = await fetchI18nMapApi(CHAT_API);
+          const incoming = data?.map;
+          runtimeI18nMap = normalizeI18nMapPayloadApi
+            ? normalizeI18nMapPayloadApi(incoming)
+            : {
+                phase: incoming?.phase && typeof incoming.phase === "object" ? incoming.phase : {},
+                status: incoming?.status && typeof incoming.status === "object" ? incoming.status : {},
+                activityCode:
+                  incoming?.activityCode && typeof incoming.activityCode === "object"
+                    ? incoming.activityCode
+                    : {},
+              };
+        } catch {
+          // Keep fallback behavior when map endpoint is unavailable.
         }
       }
 
@@ -259,6 +462,27 @@
         modelLoadingMask.classList.toggle("open", Boolean(open));
       }
 
+      function formatClockValue(dateValue) {
+        if (formatClockApi) {
+          return formatClockApi(dateValue || new Date(), { locale: "zh-TW" });
+        }
+        return new Date(dateValue || Date.now()).toLocaleTimeString("zh-TW", { hour12: false });
+      }
+
+      function formatTimestampValue(ts) {
+        if (formatTsApi) return formatTsApi(ts, { locale: "zh-TW" });
+        if (!ts) return "";
+        const date = new Date(ts);
+        if (Number.isNaN(date.getTime())) return "";
+        return date.toLocaleString("zh-TW", { hour12: false });
+      }
+
+      function formatUsageNumber(num) {
+        if (formatNumberApi) return formatNumberApi(num, { locale: "en-US" });
+        if (num === null || num === undefined || Number.isNaN(num)) return "-";
+        return Number(num).toLocaleString("en-US");
+      }
+
             function getGlossaryHtml() {
         if (currentLang === "en") {
           return `
@@ -277,10 +501,6 @@
           <div class="glossary-line"><b>即時串流</b>：先即時顯示回覆，完成後再做最終同步。</div>
         `;
       }
-      function formatClock(d = new Date()) {
-        return d.toLocaleTimeString("zh-TW", { hour12: false });
-      }
-
             function renderActivityPanel() {
         const title = currentLang === "en" ? "Live Activity" : "即時動態";
         if (!activityEvents.length) {
@@ -297,7 +517,7 @@
       function addActivity(text) {
         const normalized = String(text || "").trim();
         if (!normalized) return;
-        activityEvents.unshift({ time: formatClock(), text: normalized });
+        activityEvents.unshift({ time: formatClockValue(new Date()), text: normalized });
         if (activityEvents.length > 40) activityEvents.length = 40;
         renderActivityPanel();
         showActivityBubble(normalized, isSending || serverLocked);
@@ -340,6 +560,16 @@
       }
 
       function resetLiveStream() {
+        if (resetLiveStreamApi) {
+          liveStreamState = resetLiveStreamApi({
+            clearScheduledCollapse: () => {
+              if (!commandCollapseTimer) return;
+              clearTimeout(commandCollapseTimer);
+              commandCollapseTimer = null;
+            },
+          });
+          return;
+        }
         if (commandCollapseTimer) {
           clearTimeout(commandCollapseTimer);
           commandCollapseTimer = null;
@@ -348,6 +578,19 @@
       }
 
       function initLiveStream() {
+        if (initLiveStreamApi) {
+          liveStreamState = initLiveStreamApi({
+            currentState: liveStreamState,
+            streamingAssistantBubble,
+            thinkingWord: t("thinkingWord"),
+            clearScheduledCollapse: () => {
+              if (!commandCollapseTimer) return;
+              clearTimeout(commandCollapseTimer);
+              commandCollapseTimer = null;
+            },
+          });
+          return;
+        }
         const contentEl = streamingAssistantBubble?.querySelector(".message-content");
         if (!(contentEl instanceof HTMLElement)) return;
         if (commandCollapseTimer) {
@@ -374,6 +617,13 @@
       }
 
       function appendStreamNote(chunkText) {
+        if (appendStreamNoteApi) {
+          liveStreamState = appendStreamNoteApi({
+            currentState: liveStreamState,
+            thinkingWord: t("thinkingWord"),
+          }, chunkText);
+          return;
+        }
         const normalized = String(chunkText || "");
         if (!normalized || !liveStreamState) return;
 
@@ -396,6 +646,19 @@
       }
 
       function updateLiveAssistantPhase(phase) {
+        if (updateLiveAssistantPhaseApi) {
+          liveStreamState = updateLiveAssistantPhaseApi(
+            {
+              currentState: liveStreamState,
+              roleAssistant: t("roleAssistant"),
+              thinkingWord: t("thinkingWord"),
+              localizePhase,
+              appendMessage,
+            },
+            phase
+          );
+          return;
+        }
         const normalized = String(phase || "").trim();
         if (!normalized || !liveStreamState) return;
         if (normalized === liveStreamState.currentAssistantPhase) return;
@@ -426,6 +689,19 @@
       }
 
       function splitLiveAssistantBubble(forcePhase = "") {
+        if (splitLiveAssistantBubbleApi) {
+          liveStreamState = splitLiveAssistantBubbleApi(
+            {
+              currentState: liveStreamState,
+              roleAssistant: t("roleAssistant"),
+              thinkingWord: t("thinkingWord"),
+              localizePhase,
+              appendMessage,
+            },
+            forcePhase
+          );
+          return;
+        }
         if (!liveStreamState) return;
         const currentBubble = liveStreamState.currentAssistantBubble;
         if (!(currentBubble instanceof HTMLElement)) return;
@@ -446,40 +722,13 @@
         liveStreamState.hasRealAssistantText = false;
       }
 
-      function formatRunLine(raw) {
-        const text = String(raw || "").trim();
-        if (!text) return "";
-
-        if (/^Run:/i.test(text)) {
-          const command = text.replace(/^Run:\s*/i, "").trim();
-          if (!command) return "";
-          liveStreamState?.commandStarts.set(command, Date.now());
-          return currentLang === "en" ? `Executed ${command}` : `已執行 ${command}`;
-        }
-
-        if (/^Done:/i.test(text)) {
-          const command = text.replace(/^Done:\s*/i, "").trim();
-          const startedAt = liveStreamState?.commandStarts.get(command);
-          if (startedAt) liveStreamState?.commandStarts.delete(command);
-          const seconds = startedAt
-            ? Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-            : null;
-          if (currentLang === "en") {
-            return seconds ? `Executed ${command} in ${seconds}s` : `Executed ${command}`;
-          }
-          return seconds ? `已執行 ${command}，適用於 ${seconds}s` : `已執行 ${command}`;
-        }
-
-        return text;
-      }
-
       function setSummaryButtonText(summaryBtn, text) {
+        if (setSummaryButtonTextApi) {
+          setSummaryButtonTextApi(summaryBtn, text);
+          return;
+        }
         if (!(summaryBtn instanceof HTMLElement)) return;
-        summaryBtn.textContent = "";
-        const label = document.createElement("span");
-        label.className = "stream-bubble-summary-label";
-        label.textContent = String(text || "");
-        summaryBtn.appendChild(label);
+        summaryBtn.textContent = String(text || "");
       }
 
       function appendStreamActivity(text) {
@@ -491,7 +740,13 @@
         const isShellTool = /^Tool call:\s*shell_command/i.test(normalized);
         if (!isRun && !isDone && !isShellTool) return;
 
-        const rendered = formatRunLine(normalized);
+        const rendered = formatRunLineApi
+          ? formatRunLineApi(normalized, {
+              lang: currentLang,
+              commandStarts: liveStreamState.commandStarts,
+              nowMs: Date.now(),
+            })
+          : normalized;
         if (!rendered) return;
 
         const targetBubble = liveStreamState.currentAssistantBubble;
@@ -699,117 +954,34 @@
       }
 
       function escapeHtml(input) {
-        return String(input)
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;");
-      }
-
-      function isRenderableImageUrl(url) {
-        return /^https?:\/\//i.test(url) || /^\/public\//i.test(url);
+        if (escapeHtmlApi) return escapeHtmlApi(input);
+        return String(input);
       }
 
       function renderMarkdownToHtml(raw) {
-        const source = String(raw || "");
-        const markedApi = window.marked;
-        if (!markedApi || typeof markedApi.parse !== "function") {
-          return escapeHtml(source);
-        }
-        const parsed = markedApi.parse(source, {
-          gfm: true,
-          breaks: true,
-          mangle: false,
-          headerIds: false,
-        });
-        const purifier = window.DOMPurify;
-        if (purifier && typeof purifier.sanitize === "function") {
-          return purifier.sanitize(parsed);
-        }
-        return parsed;
+        return escapeHtml(raw || "");
       }
 
       function renderMessageHtml(text) {
-        const html = renderMarkdownToHtml(text);
-        const tpl = document.createElement("template");
-        tpl.innerHTML = html;
-
-        const images = tpl.content.querySelectorAll("img");
-        for (const img of images) {
-          const src = String(img.getAttribute("src") || "");
-          if (!isRenderableImageUrl(src)) {
-            const fallback = document.createTextNode(img.getAttribute("alt") || src);
-            img.replaceWith(fallback);
-            continue;
-          }
-          img.classList.add("inline-image");
-          img.setAttribute("loading", "lazy");
-          const wrap = document.createElement("div");
-          wrap.className = "inline-image-wrap";
-          img.replaceWith(wrap);
-          wrap.appendChild(img);
-        }
-
-        const links = tpl.content.querySelectorAll("a[href]");
-        for (const link of links) {
-          link.setAttribute("target", "_blank");
-          link.setAttribute("rel", "noopener noreferrer");
-        }
-
-        const hljsApi = window.hljs;
-        if (hljsApi && typeof hljsApi.highlightElement === "function") {
-          const codeBlocks = tpl.content.querySelectorAll("pre code");
-          for (const block of codeBlocks) {
-            try {
-              hljsApi.highlightElement(block);
-            } catch {
-              // ignore highlight failures for unknown languages
-            }
-          }
-        }
-
-        return tpl.innerHTML;
+        if (renderMessageHtmlApi) return renderMessageHtmlApi(text);
+        return escapeHtml(text || "");
       }
 
       function extractMarkdownImages(text) {
-        const source = String(text || "");
-        const images = [];
-        const cleaned = source.replace(
-          /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
-          (_, altRaw, urlRaw) => {
-            const src = String(urlRaw || "").trim().replace(/^<|>$/g, "");
-            if (!src) return "";
-            if (!/^(https?:\/\/|data:image\/|\/public\/uploads\/)/i.test(src)) {
-              return "";
-            }
-            const fileName = String(altRaw || "").trim() || "assistant-image";
-            images.push({ url: src, fileName });
-            return "";
-          }
-        );
-        return {
-          text: cleaned.replace(/\n{3,}/g, "\n\n").trim(),
-          images,
-        };
+        if (extractMarkdownImagesApi) return extractMarkdownImagesApi(text);
+        return { text: String(text || ""), images: [] };
       }
 
       function renderAttachments() {
-        if (!uploadedImages.length) {
+        if (!renderAttachmentsApi) {
           attachmentList.innerHTML = "";
           return;
         }
-
-        attachmentList.innerHTML = uploadedImages
-          .map(
-            (img, i) => `
-              <div class="attachment-item">
-                <img src="${escapeHtml(img.previewUrl || img.url)}" alt="${escapeHtml(img.fileName)}" />
-                <button type="button" class="attachment-remove" data-remove-index="${i}" aria-label="Remove image">
-                  &times;
-                </button>
-              </div>
-            `
-          )
-          .join("");
+        renderAttachmentsApi({
+          attachmentListEl: attachmentList,
+          uploadedImages,
+          escapeHtml,
+        });
       }
 
       async function uploadSelectedImages(files) {
@@ -829,12 +1001,8 @@
           const formData = new FormData();
           formData.append("file", file);
 
-          const res = await fetch(CHAT_API.UPLOADS || "/api/uploads", {
-            method: "POST",
-            body: formData,
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Upload failed");
+          if (!uploadImageApi) throw new Error("ChatApiUtils.uploadImage unavailable");
+          const data = await uploadImageApi(CHAT_API, formData);
           const previewUrl = await fileToDataUrl(file);
 
           uploadedImages.push({
@@ -846,13 +1014,6 @@
           });
         }
         renderAttachments();
-      }
-
-      function formatTs(ts) {
-        if (!ts) return "";
-        const date = new Date(ts);
-        if (Number.isNaN(date.getTime())) return "";
-        return date.toLocaleString("zh-TW", { hour12: false });
       }
 
       function setStatus(text) {
@@ -882,79 +1043,57 @@
         drawerBackdrop.classList.remove("open");
       }
 
+      function ensureImageViewerController() {
+        if (imageViewerController) return imageViewerController;
+        if (!createImageViewerControllerApi) return null;
+        imageViewerController = createImageViewerControllerApi({
+          viewer: imageViewer,
+          imageEl: imageViewerImg,
+          prevBtn: imageViewerPrev,
+          nextBtn: imageViewerNext,
+          counterEl: imageViewerCounter,
+        });
+        return imageViewerController;
+      }
+
       function renderImageViewerState() {
-        if (!(imageViewerImg instanceof HTMLImageElement)) return;
-        const item = imageViewerGallery[imageViewerIndex];
-        if (!item) return;
-        imageViewerImg.src = String(item.src || "");
-        imageViewerImg.alt = String(item.alt || "preview");
-        const hasMultiple = imageViewerGallery.length > 1;
-        if (imageViewerPrev instanceof HTMLElement) {
-          imageViewerPrev.classList.toggle("show", hasMultiple);
-        }
-        if (imageViewerNext instanceof HTMLElement) {
-          imageViewerNext.classList.toggle("show", hasMultiple);
-        }
-        if (imageViewerCounter instanceof HTMLElement) {
-          if (hasMultiple) {
-            imageViewerCounter.textContent = `${imageViewerIndex + 1} / ${imageViewerGallery.length}`;
-            imageViewerCounter.classList.add("show");
-          } else {
-            imageViewerCounter.textContent = "";
-            imageViewerCounter.classList.remove("show");
-          }
-        }
+        const controller = ensureImageViewerController();
+        if (!controller) return;
+        controller.renderState();
       }
 
       function openImageViewer(src, alt = "preview", gallery = null, index = 0) {
-        const fallback = [{ src, alt }];
-        imageViewerGallery = Array.isArray(gallery) && gallery.length > 0 ? gallery : fallback;
-        imageViewerIndex = Math.max(0, Math.min(Number(index) || 0, imageViewerGallery.length - 1));
-        renderImageViewerState();
-        imageViewer.classList.add("open");
-        imageViewer.setAttribute("aria-hidden", "false");
+        const controller = ensureImageViewerController();
+        if (!controller) return;
+        controller.open(src, alt, gallery, index);
       }
 
       function closeImageViewer() {
-        imageViewer.classList.remove("open");
-        imageViewer.setAttribute("aria-hidden", "true");
-        imageViewerImg.removeAttribute("src");
-        imageViewerGallery = [];
-        imageViewerIndex = 0;
-        if (imageViewerCounter instanceof HTMLElement) {
-          imageViewerCounter.textContent = "";
-          imageViewerCounter.classList.remove("show");
-        }
+        const controller = ensureImageViewerController();
+        if (!controller) return;
+        controller.close();
       }
 
       function navigateImageViewer(step) {
-        if (!imageViewer.classList.contains("open")) return;
-        if (!Array.isArray(imageViewerGallery) || imageViewerGallery.length <= 1) return;
-        const total = imageViewerGallery.length;
-        imageViewerIndex = (imageViewerIndex + step + total) % total;
-        renderImageViewerState();
+        const controller = ensureImageViewerController();
+        if (!controller) return;
+        controller.navigate(step);
       }
 
       function renderSessionList(sessions) {
         cachedSessions = sessions;
-        if (!sessions.length) {
+        if (!renderSessionListApi) {
           sessionList.innerHTML = `<div class="empty">${escapeHtml(t("emptyNoSessions"))}</div>`;
           return;
         }
-
-        sessionList.innerHTML = sessions
-          .map((s) => {
-            const when = formatTs(s.updatedAt);
-            const isActive = s.id === selectedSessionId;
-            const title = s.title || s.id;
-            return `
-              <button type="button" class="session-item ${isActive ? "active" : ""}" data-session-id="${s.id}">
-                <div class="session-item-title">${escapeHtml(title)}</div>
-                <div class="session-item-time">${escapeHtml(when || s.id)}</div>
-              </button>
-            `;
-          })
-          .join("");
+        renderSessionListApi({
+          sessionListEl: sessionList,
+          sessions,
+          selectedSessionId,
+          emptyText: t("emptyNoSessions"),
+          formatTs: formatTimestampValue,
+          escapeHtml,
+        });
       }
 
       function updateInputLock() {
@@ -1014,6 +1153,20 @@
       }
 
       function createProcessBlock(text, metaText = "", open = false, phase = "") {
+        if (createProcessBlockApi) {
+          const row = createProcessBlockApi({
+            text,
+            metaText,
+            open,
+            phase,
+            renderMessageHtml,
+            escapeHtml,
+          });
+          chat.appendChild(row);
+          chat.scrollTop = chat.scrollHeight;
+          updateScrollToBottomButton();
+          return row;
+        }
         const row = document.createElement("div");
         row.className = "row assistant assistant-process";
         if (phase) row.dataset.phase = String(phase);
@@ -1032,6 +1185,19 @@
       }
 
       function createAssistantPlainBlock(text, metaText = "", phase = "") {
+        if (createAssistantPlainBlockApi) {
+          const row = createAssistantPlainBlockApi({
+            text,
+            metaText,
+            phase,
+            renderMessageHtml,
+            escapeHtml,
+          });
+          chat.appendChild(row);
+          chat.scrollTop = chat.scrollHeight;
+          updateScrollToBottomButton();
+          return row;
+        }
         const row = document.createElement("div");
         row.className = "row assistant assistant-plain";
         if (phase) row.dataset.phase = String(phase);
@@ -1098,7 +1264,7 @@
         const normalizedPhase = String(phase || "").trim();
         const phaseLabel = localizePhase(normalizedPhase);
         const metaText = `${t("roleAssistant")}${phaseLabel ? ` · ${phaseLabel}` : ""}${
-          timestamp ? ` · ${formatTs(timestamp)}` : ""
+          timestamp ? ` · ${formatTimestampValue(timestamp)}` : ""
         }`;
 
         if (normalizedPhase && normalizedPhase !== PHASE_FINAL_ANSWER) {
@@ -1116,6 +1282,12 @@
       }
 
       function groupMessagesForRender(messages) {
+        if (groupMessagesForRenderApi) {
+          return groupMessagesForRenderApi(messages, {
+            phaseFinalAnswer: PHASE_FINAL_ANSWER,
+            phaseCommentary: PHASE_COMMENTARY,
+          });
+        }
         const grouped = [];
         let pendingAssistantGroup = null;
 
@@ -1162,6 +1334,12 @@
       }
 
       function ensureProcessFinalDivider(processRow, show) {
+        if (ensureProcessFinalDividerApi) {
+          ensureProcessFinalDividerApi(processRow, show, {
+            label: currentLang === "en" ? "Final message" : "最終訊息",
+          });
+          return;
+        }
         if (!(processRow instanceof HTMLElement)) return;
         const existing = processRow.nextElementSibling;
         const isExistingDivider =
@@ -1185,6 +1363,15 @@
       }
 
       function refreshFinalDividers() {
+        if (refreshFinalDividersApi) {
+          refreshFinalDividersApi({
+            chatEl: chat,
+            phaseFinalAnswer: PHASE_FINAL_ANSWER,
+            label: currentLang === "en" ? "Final message" : "最終訊息",
+            ensureProcessFinalDivider,
+          });
+          return;
+        }
         const rows = Array.from(chat.querySelectorAll(".row.assistant"));
         for (let i = 0; i < rows.length; i += 1) {
           const row = rows[i];
@@ -1200,6 +1387,10 @@
       }
 
       function setBubbleText(bubbleEl, text) {
+        if (setBubbleTextApi) {
+          setBubbleTextApi(bubbleEl, text, { renderMessageHtml });
+          return;
+        }
         if (!(bubbleEl instanceof HTMLElement)) return;
         const contentEl = bubbleEl.querySelector(".message-content");
         if (!(contentEl instanceof HTMLElement)) return;
@@ -1241,8 +1432,8 @@
             const phase = isAssistant ? String(m.phase || "").trim() : "";
             const phaseLabel = isAssistant && phase ? localizePhase(phase) : "";
             const metaText = isAssistant
-              ? `${t("roleAssistant")}${phaseLabel ? ` · ${phaseLabel}` : ""}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`
-              : `${t("roleUser")}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`;
+              ? `${t("roleAssistant")}${phaseLabel ? ` · ${phaseLabel}` : ""}${m.timestamp ? ` · ${formatTimestampValue(m.timestamp)}` : ""}`
+              : `${t("roleUser")}${m.timestamp ? ` · ${formatTimestampValue(m.timestamp)}` : ""}`;
             const row = appendMessage(m.role, "", metaText, phase || "");
             appendMessageImageAttachments(row, [
               {
@@ -1266,7 +1457,7 @@
             const userRow = appendMessage(
               "user",
               userText,
-              `${t("roleUser")}${m.timestamp ? ` · ${formatTs(m.timestamp)}` : ""}`
+              `${t("roleUser")}${m.timestamp ? ` · ${formatTimestampValue(m.timestamp)}` : ""}`
             );
             lastBubbleContext = {
               row: userRow,
@@ -1313,32 +1504,33 @@
         }
       }
 
-      function formatNumber(num) {
-        if (num === null || num === undefined || Number.isNaN(num)) return "-";
-        return Number(num).toLocaleString("en-US");
+      function resolveMapLabel(sectionName, key, fallback) {
+        const section = runtimeI18nMap?.[sectionName];
+        if (!section || typeof section !== "object") return fallback;
+        const entry = section[key];
+        if (!entry || typeof entry !== "object") return fallback;
+        const localized = entry[currentLang];
+        if (typeof localized !== "string") return fallback;
+        const trimmed = localized.trim();
+        return trimmed || fallback;
       }
 
       function localizePhase(phase) {
+        if (localizePhaseApi) {
+          return localizePhaseApi(runtimeI18nMap, phase, currentLang);
+        }
         const raw = String(phase || "").trim();
         if (!raw || currentLang === "en") return raw;
-        const PHASE_ZH = {
-          [PHASE_FINAL_ANSWER]: "最終回覆",
-          reasoning: "推理",
-          analysis: "分析",
-          commentary: "說明",
-        };
-        return PHASE_ZH[raw] || raw;
+        return resolveMapLabel("phase", raw, raw);
       }
 
       function localizeStatusWord(statusWord) {
+        if (localizeStatusApi) {
+          return localizeStatusApi(runtimeI18nMap, statusWord, currentLang);
+        }
         const raw = String(statusWord || "").trim();
         if (!raw || currentLang === "en") return raw;
-        const STATUS_ZH = {
-          started: "已開始",
-          thinking: "思考中",
-          done: "完成",
-        };
-        return STATUS_ZH[raw] || raw;
+        return resolveMapLabel("status", raw, raw);
       }
 
       function autoSwitchModelOnAccessError(messageText) {
@@ -1363,23 +1555,14 @@
       }
 
       function formatActivityEvent(event) {
+        if (formatActivityEventApi) {
+          return formatActivityEventApi(runtimeI18nMap, event, currentLang);
+        }
         const rawText = String(event?.text || "").trim();
         const code = String(event?.code || "").trim();
         if (!rawText) return "";
         if (currentLang === "en" || !code) return rawText;
-
-        const CODE_ZH = {
-          thread_started: "對話已建立",
-          turn_started: "回合開始",
-          turn_completed: "回合完成",
-          item_started: "步驟開始",
-          item_completed: "步驟完成",
-          tool_call: "工具呼叫",
-          tool_output: "工具回傳",
-          reasoning_update: "推理更新",
-          error_event: "錯誤事件",
-        };
-        const label = CODE_ZH[code] || rawText;
+        const label = resolveMapLabel("activityCode", code, rawText);
         const colonIndex = rawText.indexOf(":");
         if (colonIndex > -1) {
           const detail = rawText.slice(colonIndex + 1).trim();
@@ -1407,8 +1590,8 @@
           stats.weekUsedPercent === null || stats.weekUsedPercent === undefined
             ? "-"
             : `${Math.max(0, 100 - Number(stats.weekUsedPercent))}%`;
-        const contextRemain = formatNumber(stats.contextRemaining);
-        const contextWindow = formatNumber(stats.contextWindow);
+        const contextRemain = formatUsageNumber(stats.contextRemaining);
+        const contextWindow = formatUsageNumber(stats.contextWindow);
         usageContext.textContent = contextRemainPercent
           ? t("usageContextWithPercent")(contextRemain, contextWindow, contextRemainPercent)
           : t("usageContext")(contextRemain, contextWindow);
@@ -1423,12 +1606,8 @@
           return;
         }
         try {
-          const statsEndpoint = CHAT_API.SESSION_STATS
-            ? CHAT_API.SESSION_STATS(sessionId)
-            : `/api/sessions/${sessionId}/stats`;
-          const res = await fetch(statsEndpoint);
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "stats error");
+          if (!fetchSessionStatsApi) throw new Error("ChatApiUtils.fetchSessionStats unavailable");
+          const data = await fetchSessionStatsApi(CHAT_API, sessionId);
           lastStats = data.stats || null;
           renderUsage(lastStats);
         } catch {
@@ -1439,8 +1618,8 @@
 
       async function loadSessions() {
         addActivity(currentLang === "en" ? "Loading sessions list..." : "正在載入 session 清單...");
-        const res = await fetch(CHAT_API.SESSIONS || "/api/sessions");
-        const data = await res.json();
+        if (!fetchSessionsApi) throw new Error("ChatApiUtils.fetchSessions unavailable");
+        const data = await fetchSessionsApi(CHAT_API);
         const sessions = (data.sessions || []).slice().sort((a, b) => {
           const ta = Date.parse(a?.updatedAt || "") || 0;
           const tb = Date.parse(b?.updatedAt || "") || 0;
@@ -1458,7 +1637,7 @@
           : false;
         let optionsHtml = sessions
           .map((s) => {
-            const when = formatTs(s.updatedAt);
+            const when = formatTimestampValue(s.updatedAt);
             const title = `${s.title || s.id}${when ? ` (${when})` : ""}`;
             return `<option value="${s.id}">${escapeHtml(title)}</option>`;
           })
@@ -1497,13 +1676,14 @@
         );
         if (showLoading) setLoading();
         updateUrl(sessionId);
-        const messagesEndpoint = CHAT_API.SESSION_MESSAGES
-          ? CHAT_API.SESSION_MESSAGES(sessionId)
-          : `/api/sessions/${sessionId}/messages`;
-        const res = await fetch(messagesEndpoint);
-        const data = await res.json();
-        if (!res.ok) {
-          setEmpty(data.error || "Failed to load messages");
+        let data;
+        try {
+          if (!fetchSessionMessagesApi) {
+            throw new Error("ChatApiUtils.fetchSessionMessages unavailable");
+          }
+          data = await fetchSessionMessagesApi(CHAT_API, sessionId);
+        } catch (error) {
+          setEmpty(error instanceof Error ? error.message : "Failed to load messages");
           addActivity(currentLang === "en" ? "Load messages failed" : "載入訊息失敗");
           return;
         }
@@ -1519,23 +1699,27 @@
       async function syncMessagesNoFlicker(sessionId) {
         if (!sessionId) return;
         if (isSending || streamingAssistantBubble) return;
-        const messagesEndpoint = CHAT_API.SESSION_MESSAGES
-          ? CHAT_API.SESSION_MESSAGES(sessionId)
-          : `/api/sessions/${sessionId}/messages`;
-        const res = await fetch(messagesEndpoint);
-        const data = await res.json();
-        if (!res.ok) return;
+        let data;
+        try {
+          if (!fetchSessionMessagesApi) return;
+          data = await fetchSessionMessagesApi(CHAT_API, sessionId);
+          if (!data) return;
+        } catch {
+          return;
+        }
         renderMessages(data.messages || [], { preserveScroll: true });
       }
 
       async function syncMessagesForce(sessionId) {
         if (!sessionId) return;
-        const messagesEndpoint = CHAT_API.SESSION_MESSAGES
-          ? CHAT_API.SESSION_MESSAGES(sessionId)
-          : `/api/sessions/${sessionId}/messages`;
-        const res = await fetch(messagesEndpoint);
-        const data = await res.json();
-        if (!res.ok) return;
+        let data;
+        try {
+          if (!fetchSessionMessagesApi) return;
+          data = await fetchSessionMessagesApi(CHAT_API, sessionId);
+          if (!data) return;
+        } catch {
+          return;
+        }
         const incoming = Array.isArray(data.messages) ? data.messages : [];
         const domHasFinalAssistant = Boolean(chat.querySelector(FINAL_ASSISTANT_ROWS_SELECTOR));
         const serverHasFinalAssistant = incoming.some(
@@ -1643,6 +1827,22 @@
 
 
       async function recoverAfterStreamInterruption(sessionId) {
+        if (recoverAfterStreamInterruptionApi) {
+          return recoverAfterStreamInterruptionApi(
+            {
+              loadSessions,
+              setPickerValue: (id) => {
+                picker.value = id;
+              },
+              syncMessagesWithRetry,
+              syncRetries: SYNC_RETRIES,
+              syncDelayMs: SYNC_DELAY_MS,
+              loadStats,
+              reconcileAssistantSplitFromSession,
+            },
+            sessionId
+          );
+        }
         if (!sessionId) return false;
         try {
           await loadSessions();
@@ -1657,6 +1857,25 @@
       }
 
       async function reconcileAssistantSplitFromSession(sessionId) {
+        if (reconcileAssistantSplitFromSessionApi) {
+          return reconcileAssistantSplitFromSessionApi(
+            {
+              liveStreamState,
+              fetchSessionMessages: async (id) => {
+                if (!fetchSessionMessagesApi) return null;
+                return fetchSessionMessagesApi(CHAT_API, id);
+              },
+              phaseFinalAnswer: PHASE_FINAL_ANSWER,
+              localizePhase,
+              roleAssistant: t("roleAssistant"),
+              formatTimestamp: formatTimestampValue,
+              replaceBubbleWithProcessBlock,
+              appendAssistantByPhase,
+              refreshFinalDividers,
+            },
+            sessionId
+          );
+        }
         if (!sessionId || !liveStreamState) return;
         if (liveStreamState.splitReconciled) return;
         const firstBubble = liveStreamState.currentAssistantBubble;
@@ -1664,12 +1883,9 @@
 
         let data;
         try {
-          const messagesEndpoint = CHAT_API.SESSION_MESSAGES
-            ? CHAT_API.SESSION_MESSAGES(sessionId)
-            : `/api/sessions/${sessionId}/messages`;
-          const res = await fetch(messagesEndpoint);
-          data = await res.json();
-          if (!res.ok) return;
+          if (!fetchSessionMessagesApi) return;
+          data = await fetchSessionMessagesApi(CHAT_API, sessionId);
+          if (!data) return;
         } catch {
           return;
         }
@@ -1699,7 +1915,7 @@
         const processText = processItems.map((m) => String(m?.text || "")).filter(Boolean).join("\n\n");
         const processPhaseLabel = localizePhase(processPhase);
         const processMeta = `${t("roleAssistant")}${processPhaseLabel ? ` · ${processPhaseLabel}` : ""}${
-          firstProcess?.timestamp ? ` · ${formatTs(firstProcess.timestamp)}` : ""
+          firstProcess?.timestamp ? ` · ${formatTimestampValue(firstProcess.timestamp)}` : ""
         }`;
 
         replaceBubbleWithProcessBlock(firstBubble, processText, processMeta, false, processPhase);
@@ -1713,8 +1929,8 @@
 
       async function refreshServerLock() {
         try {
-          const res = await fetch(CHAT_API.CHAT_STATUS || "/api/chat/status");
-          const data = await res.json();
+          if (!fetchChatStatusApi) return;
+          const data = await fetchChatStatusApi(CHAT_API);
           const ids = Array.isArray(data.activeSessionIds) ? data.activeSessionIds : [];
           const hasGlobal = Number(data.activeRunCount || 0) > 0;
           serverLocked = selectedSessionId ? ids.includes(selectedSessionId) : hasGlobal;
@@ -1727,18 +1943,38 @@
       }
 
       async function sendWithoutStream(promptWithImages) {
-        const endpoint = selectedSessionId
-          ? CHAT_API.SESSION_CHAT
-            ? CHAT_API.SESSION_CHAT(selectedSessionId)
-            : `/api/sessions/${selectedSessionId}/chat`
-          : CHAT_API.NEW_SESSION_CHAT || "/api/sessions/new/chat";
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: promptWithImages, model: currentModel || null }),
+        if (sendWithoutStreamApi) {
+          return sendWithoutStreamApi(
+            {
+              sessionId: selectedSessionId,
+              currentModel,
+              sendChatNonStream: async (payload) => {
+                if (!sendChatNonStreamApi) {
+                  throw new Error("ChatApiUtils.sendChatNonStream unavailable");
+                }
+                return sendChatNonStreamApi(CHAT_API, payload);
+              },
+              setSessionId: (id) => {
+                selectedSessionId = id;
+              },
+              updateUrl,
+              loadSessions,
+              setPickerValue: (id) => {
+                picker.value = id;
+              },
+              loadMessages,
+            },
+            promptWithImages
+          );
+        }
+        if (!sendChatNonStreamApi) {
+          throw new Error("ChatApiUtils.sendChatNonStream unavailable");
+        }
+        const data = await sendChatNonStreamApi(CHAT_API, {
+          sessionId: selectedSessionId,
+          prompt: promptWithImages,
+          model: currentModel || null,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Send failed");
 
         if (data.sessionId) {
           selectedSessionId = data.sessionId;
@@ -1749,41 +1985,6 @@
           picker.value = selectedSessionId;
           await loadMessages(selectedSessionId, { showLoading: false });
         }
-      }
-
-      function delayMs(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-      }
-
-      function getRetryBackoffMs(attemptIndex) {
-        const exp = STREAM_RETRY_BASE_DELAY_MS * Math.pow(2, Math.max(0, attemptIndex - 1));
-        const jitter = Math.floor(Math.random() * STREAM_RETRY_JITTER_MS);
-        return Math.min(STREAM_RETRY_MAX_DELAY_MS, exp + jitter);
-      }
-
-      function normalizeErrorText(error) {
-        if (typeof error === "string") return error.toLowerCase();
-        if (error instanceof Error) return String(error.message || "").toLowerCase();
-        return String(error || "").toLowerCase();
-      }
-
-      function isRetryableStreamError(error) {
-        const isAbortError =
-          (error instanceof DOMException && error.name === ERROR_NAME_ABORT) ||
-          (error instanceof Error && error.name === ERROR_NAME_ABORT);
-        if (isAbortError) return true;
-
-        const text = normalizeErrorText(error);
-        if (!text) return false;
-        return (
-          text.includes(ERROR_TOKEN_STREAM_STALLED) ||
-          text.includes(ERROR_TOKEN_STREAM_INCOMPLETE) ||
-          text.includes(ERROR_TOKEN_STREAM_FAILED) ||
-          text.includes(ERROR_TOKEN_NETWORK_ERROR) ||
-          text.includes(ERROR_TOKEN_FAILED_TO_FETCH) ||
-          text.includes(ERROR_TOKEN_TIMEOUT) ||
-          text.includes(ERROR_TOKEN_ABORTED)
-        );
       }
 
       async function sendMessage(prompt, imagesToSend = []) {
@@ -1834,18 +2035,17 @@
             }
           }, STREAM_STALL_CHECK_INTERVAL_MS);
 
-          const res = await fetch(CHAT_API.CHAT_STREAM || "/api/chat/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+          if (!openChatStreamApi) throw new Error("ChatApiUtils.openChatStream unavailable");
+          const res = await openChatStreamApi(
+            CHAT_API,
+            {
               sessionId: selectedSessionId,
               prompt: promptForModel,
               model: currentModel || null,
               images: imageAbsolutePaths,
-            }),
-            signal: abortController.signal,
-          });
-          if (!res.ok) throw new Error("Stream failed");
+            },
+            abortController.signal
+          );
 
           if (!res.body || typeof res.body.getReader !== "function") {
             addActivity(
@@ -1862,6 +2062,84 @@
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
+          const streamDispatcher = createStreamDispatcherApi
+            ? createStreamDispatcherApi({
+                streamEvents: {
+                  STATUS: STREAM_EVENT_STATUS,
+                  HEARTBEAT: STREAM_EVENT_HEARTBEAT,
+                  ACTIVITY: STREAM_EVENT_ACTIVITY,
+                  SESSION: STREAM_EVENT_SESSION,
+                  ASSISTANT: STREAM_EVENT_ASSISTANT,
+                  ASSISTANT_BOUNDARY: STREAM_EVENT_ASSISTANT_BOUNDARY,
+                  ASSISTANT_PHASE: STREAM_EVENT_ASSISTANT_PHASE,
+                  ERROR: STREAM_EVENT_ERROR,
+                  DONE: STREAM_EVENT_DONE,
+                },
+                markGotEvent: () => {
+                  gotStreamEvent = true;
+                },
+                onStatus: async (event) => {
+                  const text = String(event.text || STREAM_STATUS_THINKING);
+                  const statusText = localizeStatusWord(text);
+                  const statusLine =
+                    currentLang === "en"
+                      ? `Status: ${statusText || text}`
+                      : `狀態：${statusText || text}`;
+                  setStatus(
+                    text === STREAM_STATUS_THINKING
+                      ? t("statusThinking")
+                      : `${t("statusSending")} (${statusText || text})`
+                  );
+                  addActivity(statusLine);
+                  showActivityBubble(statusLine, true);
+                },
+                onHeartbeat: async () => {},
+                onActivity: async (event) => {
+                  const rawText = String(event.text || "").trim();
+                  const text = formatActivityEvent(event);
+                  if (text) addActivity(text);
+                  if (rawText) appendStreamActivity(rawText);
+                },
+                onSession: async (event) => {
+                  if (!event.sessionId) return;
+                  selectedSessionId = event.sessionId;
+                  updateUrl(selectedSessionId);
+                  addActivity(
+                    currentLang === "en"
+                      ? `Session assigned: ${event.sessionId.slice(0, 8)}...`
+                      : `已分配 Session：${event.sessionId.slice(0, 8)}...`
+                  );
+                },
+                onAssistant: async (event) => {
+                  if (streamingAssistantBubble) {
+                    appendStreamNote(event.text || "");
+                  }
+                  chat.scrollTop = chat.scrollHeight;
+                  updateScrollToBottomButton();
+                },
+                onAssistantBoundary: async () => {
+                  splitLiveAssistantBubble();
+                },
+                onAssistantPhase: async (event) => {
+                  updateLiveAssistantPhase(event.phase || "");
+                },
+                onError: async (event) => {
+                  const errMsg = String(event.message || "Unknown stream error");
+                  autoSwitchModelOnAccessError(errMsg);
+                  throw new Error(errMsg);
+                },
+                onDone: async () => {
+                  streamDone = true;
+                  setStatus(t("statusDone"));
+                  scheduleCollapseCommandLogs(3500);
+                  if (selectedSessionId) {
+                    await reconcileAssistantSplitFromSession(selectedSessionId);
+                  }
+                  addActivity(currentLang === "en" ? "Stream done" : "串流完成");
+                  hideActivityBubble(700);
+                },
+              })
+            : null;
 
           while (true) {
             const { done, value } = await reader.read();
@@ -1872,118 +2150,16 @@
             buffer = lines.pop() || "";
 
             for (const line of lines) {
+              if (streamDispatcher) {
+                await streamDispatcher.dispatchLine(line);
+                continue;
+              }
               if (!line.trim()) continue;
-              let event;
-              try {
-                event = JSON.parse(line);
-              } catch {
-                continue;
-              }
-
-              if (event.type === STREAM_EVENT_STATUS) {
-                gotStreamEvent = true;
-                const text = String(event.text || STREAM_STATUS_THINKING);
-                const statusText = localizeStatusWord(text);
-                const statusLine =
-                  currentLang === "en"
-                    ? `Status: ${statusText || text}`
-                    : `狀態：${statusText || text}`;
-                setStatus(
-                  text === STREAM_STATUS_THINKING
-                    ? t("statusThinking")
-                    : `${t("statusSending")} (${statusText || text})`
-                );
-                addActivity(statusLine);
-                showActivityBubble(statusLine, true);
-                continue;
-              }
-              if (event.type === STREAM_EVENT_HEARTBEAT) {
-                gotStreamEvent = true;
-                continue;
-              }
-              if (event.type === STREAM_EVENT_ACTIVITY) {
-                gotStreamEvent = true;
-                const rawText = String(event.text || "").trim();
-                const text = formatActivityEvent(event);
-                if (text) addActivity(text);
-                if (rawText) appendStreamActivity(rawText);
-                continue;
-              }
-              if (event.type === STREAM_EVENT_SESSION && event.sessionId) {
-                gotStreamEvent = true;
-                selectedSessionId = event.sessionId;
-                updateUrl(selectedSessionId);
-                addActivity(
-                  currentLang === "en"
-                    ? `Session assigned: ${event.sessionId.slice(0, 8)}...`
-                    : `已分配 Session：${event.sessionId.slice(0, 8)}...`
-                );
-                continue;
-              }
-              if (event.type === STREAM_EVENT_ASSISTANT) {
-                gotStreamEvent = true;
-                if (streamingAssistantBubble) {
-                  appendStreamNote(event.text || "");
-                }
-                chat.scrollTop = chat.scrollHeight;
-                updateScrollToBottomButton();
-                continue;
-              }
-              if (event.type === STREAM_EVENT_ASSISTANT_BOUNDARY) {
-                gotStreamEvent = true;
-                splitLiveAssistantBubble();
-                continue;
-              }
-              if (event.type === STREAM_EVENT_ASSISTANT_PHASE) {
-                gotStreamEvent = true;
-                updateLiveAssistantPhase(event.phase || "");
-                continue;
-              }
-              if (event.type === STREAM_EVENT_ERROR) {
-                const errMsg = String(event.message || "Unknown stream error");
-                autoSwitchModelOnAccessError(errMsg);
-                throw new Error(errMsg);
-              }
-              if (event.type === STREAM_EVENT_DONE) {
-                streamDone = true;
-                setStatus(t("statusDone"));
-                scheduleCollapseCommandLogs(3500);
-                if (selectedSessionId) {
-                  await reconcileAssistantSplitFromSession(selectedSessionId);
-                }
-                addActivity(currentLang === "en" ? "Stream done" : "串流完成");
-                hideActivityBubble(700);
-              }
             }
           }
 
-          if (buffer.trim()) {
-            try {
-              const event = JSON.parse(buffer);
-              if (event.type === STREAM_EVENT_ASSISTANT && streamingAssistantBubble) {
-                appendStreamNote(event.text || "");
-              } else if (event.type === STREAM_EVENT_ASSISTANT_BOUNDARY) {
-                splitLiveAssistantBubble();
-              } else if (event.type === STREAM_EVENT_ASSISTANT_PHASE) {
-                updateLiveAssistantPhase(event.phase || "");
-              } else if (event.type === STREAM_EVENT_ACTIVITY) {
-                const rawText = String(event.text || "").trim();
-                const text = formatActivityEvent(event);
-                if (text) addActivity(text);
-                if (rawText) appendStreamActivity(rawText);
-              } else if (event.type === STREAM_EVENT_DONE) {
-                streamDone = true;
-                setStatus(t("statusDone"));
-                scheduleCollapseCommandLogs(3500);
-                if (selectedSessionId) {
-                  await reconcileAssistantSplitFromSession(selectedSessionId);
-                }
-                addActivity(currentLang === "en" ? "Stream done" : "串流完成");
-                hideActivityBubble(700);
-              }
-            } catch {
-              // ignore trailing partial json line
-            }
+          if (streamDispatcher) {
+            await streamDispatcher.dispatchLine(buffer);
           }
           if (!streamDone) {
             throw new Error(ERROR_TOKEN_STREAM_INCOMPLETE);
@@ -2020,7 +2196,12 @@
             stallTimer = null;
           }
 
-          const retryableError = isRetryableStreamError(error);
+          const retryableError = isRetryableStreamErrorApi
+            ? isRetryableStreamErrorApi(error, {
+                abortName: ERROR_NAME_ABORT,
+                tokens: STREAM_RETRY_ERROR_TOKENS,
+              })
+            : false;
 
           let recovered = false;
           if (selectedSessionId && (retryableError || gotStreamEvent || !streamDone)) {
@@ -2029,13 +2210,22 @@
 
           if (!recovered && retryableError && !gotStreamEvent) {
             for (let attempt = 1; attempt <= STREAM_RETRY_MAX_ATTEMPTS; attempt += 1) {
-              const retryDelay = getRetryBackoffMs(attempt);
+              const retryDelay = getRetryBackoffMsApi
+                ? getRetryBackoffMsApi(attempt, {
+                    baseDelayMs: STREAM_RETRY_BASE_DELAY_MS,
+                    maxDelayMs: STREAM_RETRY_MAX_DELAY_MS,
+                    jitterMs: STREAM_RETRY_JITTER_MS,
+                  })
+                : STREAM_RETRY_BASE_DELAY_MS;
               addActivity(
                 currentLang === "en"
                   ? `Stream failed early, retrying via sync mode (${attempt}/${STREAM_RETRY_MAX_ATTEMPTS})...`
                   : `串流初期失敗，改用同步模式重試（${attempt}/${STREAM_RETRY_MAX_ATTEMPTS}）...`
               );
-              await delayMs(retryDelay);
+              if (!delayMsApi) {
+                throw new Error("ChatRetryUtils.delayMs unavailable");
+              }
+              await delayMsApi(retryDelay);
               try {
                 await sendWithoutStream(promptForModel);
                 recovered = true;
@@ -2091,232 +2281,257 @@
         await refreshServerLock();
       }
 
-      picker.addEventListener("change", async (e) => {
-        await selectSession(e.target.value);
+      if (!bindBootstrapEventsApi) {
+        throw new Error("ChatBootstrapEventsUtils.bindBootstrapEvents unavailable");
+      }
+      bindBootstrapEventsApi({
+        elements: {
+          picker,
+          menuBtn,
+          drawerCloseBtn,
+          drawerBackdrop,
+          sessionList,
+          chat,
+          scrollToBottomBtn,
+          imageViewer,
+          imageViewerClose,
+          imageViewerPrev,
+          imageViewerNext,
+          newSessionBtn,
+          form,
+          attachBtn,
+          imageInput,
+          attachmentList,
+          promptInput,
+          langBtn,
+          modelPicker,
+          helpBtn,
+          activityBtn,
+        },
+        handlers: {
+          onPickerChange: async (value) => {
+            await selectSession(value);
+          },
+          onMenuClick: () => {
+            if (isSending || serverLocked) return;
+            openDrawer();
+          },
+          onDrawerClose: closeDrawer,
+          onDrawerBackdropClick: (e) => {
+            if (e.target === drawerBackdrop) closeDrawer();
+          },
+          onSessionListClick: async (e) => {
+            if (!(e.target instanceof Element)) return;
+            const btn = e.target.closest("[data-session-id]");
+            if (!btn) return;
+            const sessionId = btn.getAttribute("data-session-id");
+            if (!sessionId || sessionId === selectedSessionId) {
+              closeDrawer();
+              return;
+            }
+            closeDrawer();
+            await selectSession(sessionId);
+          },
+          onChatClick: (e) => {
+            if (!(e.target instanceof Element)) return;
+            const processBtn = e.target.closest(".assistant-process-toggle");
+            if (processBtn instanceof HTMLButtonElement) {
+              const row = processBtn.closest(".row.assistant.assistant-process");
+              if (!(row instanceof HTMLElement)) return;
+              row.classList.toggle("open");
+              const arrow = processBtn.querySelector(".assistant-process-arrow");
+              if (arrow instanceof HTMLElement) {
+                arrow.textContent = row.classList.contains("open") ? "v" : ">";
+              }
+              updateScrollToBottomButton();
+              return;
+            }
+            const img = e.target.closest(".inline-image");
+            if (!(img instanceof HTMLImageElement)) return;
+            const wrap = img.closest(".message-image-attachments");
+            const siblings = wrap ? Array.from(wrap.querySelectorAll(".inline-image")) : [img];
+            const gallery = siblings
+              .filter((item) => item instanceof HTMLImageElement)
+              .map((item) => ({ src: item.src, alt: item.alt || "preview" }));
+            const currentIndex = Math.max(0, siblings.indexOf(img));
+            openImageViewer(img.src, img.alt || "preview", gallery, currentIndex);
+          },
+          onChatScroll: updateScrollToBottomButton,
+          onScrollToBottomClick: () => {
+            chat.scrollTo({ top: chat.scrollHeight, behavior: "smooth" });
+            updateScrollToBottomButton();
+          },
+          onImageViewerClose: closeImageViewer,
+          onImageViewerPrev: () => navigateImageViewer(-1),
+          onImageViewerNext: () => navigateImageViewer(1),
+          onImageViewerClick: (e) => {
+            if (e.target === imageViewer) closeImageViewer();
+          },
+          onDocumentKeydown: (e) => {
+            if (e.key === "Escape" && imageViewer.classList.contains("open")) {
+              closeImageViewer();
+              return;
+            }
+            if (!imageViewer.classList.contains("open")) return;
+            if (e.key === "ArrowLeft") {
+              e.preventDefault();
+              navigateImageViewer(-1);
+              return;
+            }
+            if (e.key === "ArrowRight") {
+              e.preventDefault();
+              navigateImageViewer(1);
+            }
+          },
+          onNewSessionClick: () => {
+            closeDrawer();
+            selectedSessionId = null;
+            updateUrl(null);
+            setEmpty(t("newSessionHint"));
+            setStatus(t("statusNewSession"));
+            addActivity(currentLang === "en" ? "Entered new session mode" : "已進入新對話模式");
+            lastStats = null;
+            renderUsage(null);
+            refreshServerLock();
+            promptInput.focus();
+          },
+          onSubmit: async () => {
+            if (isSending || serverLocked) return;
+            const prompt = promptInput.value.trim();
+            if (!prompt && uploadedImages.length === 0) return;
+            const imagesToSend = uploadedImages.slice();
+            promptInput.value = "";
+            uploadedImages = [];
+            renderAttachments();
+            imageInput.value = "";
+            autoResizePrompt();
+            await sendMessage(prompt, imagesToSend);
+          },
+          onAttachClick: () => {
+            if (isSending || serverLocked) return;
+            imageInput.click();
+          },
+          onImageInputChange: async (files) => {
+            if (isSending || serverLocked) return;
+            if (!files.length) return;
+            try {
+              addActivity(
+                currentLang === "en"
+                  ? `Uploading ${files.length} image${files.length > 1 ? "s" : ""}...`
+                  : `正在上傳 ${files.length} 張圖片...`
+              );
+              await uploadSelectedImages(files);
+              addActivity(
+                currentLang === "en"
+                  ? `Upload done (${files.length})`
+                  : `圖片上傳完成（${files.length}）`
+              );
+            } catch (error) {
+              addActivity(
+                currentLang === "en"
+                  ? `Upload error: ${error instanceof Error ? error.message : "Unknown error"}`
+                  : `上傳錯誤：${error instanceof Error ? error.message : "未知錯誤"}`
+              );
+              setStatus(error instanceof Error ? error.message : "Upload failed");
+            } finally {
+              imageInput.value = "";
+            }
+          },
+          onAttachmentListClick: (e) => {
+            if (!(e.target instanceof Element)) return;
+            const btn = e.target.closest("[data-remove-index]");
+            if (!btn) return;
+            const index = Number(btn.getAttribute("data-remove-index"));
+            if (Number.isNaN(index) || index < 0 || index >= uploadedImages.length) return;
+            uploadedImages.splice(index, 1);
+            renderAttachments();
+          },
+          onPromptInput: autoResizePrompt,
+          onPromptKeydown: (e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              form.requestSubmit();
+            }
+          },
+          onLanguageToggle: () => {
+            currentLang = currentLang === "en" ? "zh" : "en";
+            localStorage.setItem("chat_lang", currentLang);
+            applyLanguage();
+            if (!isSending && !serverLocked) {
+              setStatus(selectedSessionId ? t("statusReady") : t("statusNewSession"));
+            }
+            if (selectedSessionId) {
+              void loadMessages(selectedSessionId, { showLoading: false }).catch(() => {});
+            } else {
+              setEmpty(t("newSessionHint"));
+            }
+          },
+          onModelChange: (value) => {
+            currentModel = normalizeModelValue(value);
+            localStorage.setItem("chat_model", currentModel);
+            renderModelPicker();
+            addActivity(
+              currentLang === "en"
+                ? `Model switched: ${currentModel || "none"}`
+                : `模型已切換：${currentModel || "未設定"}`
+            );
+          },
+          onHelpClick: (e) => {
+            e.stopPropagation();
+            glossaryPanel.classList.toggle("open");
+            activityPanel.classList.remove("open");
+            placeGlossaryPanel();
+          },
+          onActivityClick: (e) => {
+            e.stopPropagation();
+            activityPanel.classList.toggle("open");
+            glossaryPanel.classList.remove("open");
+            placeActivityPanel();
+          },
+          onDocumentClick: (e) => {
+            if (!helpWrap.contains(e.target)) {
+              glossaryPanel.classList.remove("open");
+            }
+            if (!activityWrap.contains(e.target)) {
+              activityPanel.classList.remove("open");
+            }
+          },
+          onWindowResize: () => {
+            placeGlossaryPanel();
+            placeActivityPanel();
+            updateScrollToBottomButton();
+          },
+        },
       });
 
-      menuBtn.addEventListener("click", () => {
-        if (isSending || serverLocked) return;
-        openDrawer();
-      });
-
-      drawerCloseBtn.addEventListener("click", closeDrawer);
-
-      drawerBackdrop.addEventListener("click", (e) => {
-        if (e.target === drawerBackdrop) closeDrawer();
-      });
-
-      sessionList.addEventListener("click", async (e) => {
-        if (!(e.target instanceof Element)) return;
-        const btn = e.target.closest("[data-session-id]");
-        if (!btn) return;
-        const sessionId = btn.getAttribute("data-session-id");
-        if (!sessionId || sessionId === selectedSessionId) {
-          closeDrawer();
-          return;
-        }
-        closeDrawer();
-        await selectSession(sessionId);
-      });
-
-      chat.addEventListener("click", (e) => {
-        if (!(e.target instanceof Element)) return;
-        const processBtn = e.target.closest(".assistant-process-toggle");
-        if (processBtn instanceof HTMLButtonElement) {
-          const row = processBtn.closest(".row.assistant.assistant-process");
-          if (!(row instanceof HTMLElement)) return;
-          row.classList.toggle("open");
-          const arrow = processBtn.querySelector(".assistant-process-arrow");
-          if (arrow instanceof HTMLElement) {
-            arrow.textContent = row.classList.contains("open") ? "v" : ">";
-          }
-          updateScrollToBottomButton();
-          return;
-        }
-        const img = e.target.closest(".inline-image");
-        if (!(img instanceof HTMLImageElement)) return;
-        const wrap = img.closest(".message-image-attachments");
-        const siblings = wrap ? Array.from(wrap.querySelectorAll(".inline-image")) : [img];
-        const gallery = siblings
-          .filter((item) => item instanceof HTMLImageElement)
-          .map((item) => ({ src: item.src, alt: item.alt || "preview" }));
-        const currentIndex = Math.max(0, siblings.indexOf(img));
-        openImageViewer(img.src, img.alt || "preview", gallery, currentIndex);
-      });
-      chat.addEventListener("scroll", updateScrollToBottomButton);
-      scrollToBottomBtn?.addEventListener("click", () => {
-        chat.scrollTo({ top: chat.scrollHeight, behavior: "smooth" });
-        updateScrollToBottomButton();
-      });
-
-      imageViewerClose.addEventListener("click", closeImageViewer);
-      imageViewerPrev?.addEventListener("click", () => navigateImageViewer(-1));
-      imageViewerNext?.addEventListener("click", () => navigateImageViewer(1));
-      imageViewer.addEventListener("click", (e) => {
-        if (e.target === imageViewer) closeImageViewer();
-      });
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && imageViewer.classList.contains("open")) {
-          closeImageViewer();
-          return;
-        }
-        if (!imageViewer.classList.contains("open")) return;
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          navigateImageViewer(-1);
-          return;
-        }
-        if (e.key === "ArrowRight") {
-          e.preventDefault();
-          navigateImageViewer(1);
-        }
-      });
-
-      newSessionBtn.addEventListener("click", () => {
-        closeDrawer();
-        selectedSessionId = null;
-        updateUrl(null);
-        setEmpty(t("newSessionHint"));
-        setStatus(t("statusNewSession"));
-        addActivity(currentLang === "en" ? "Entered new session mode" : "已進入新對話模式");
-        lastStats = null;
-        renderUsage(null);
-        refreshServerLock();
-        promptInput.focus();
-      });
-
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        if (isSending || serverLocked) return;
-        const prompt = promptInput.value.trim();
-        if (!prompt && uploadedImages.length === 0) return;
-        const imagesToSend = uploadedImages.slice();
-        promptInput.value = "";
-        uploadedImages = [];
-        renderAttachments();
-        imageInput.value = "";
-        autoResizePrompt();
-        await sendMessage(prompt, imagesToSend);
-      });
-
-      attachBtn.addEventListener("click", () => {
-        if (isSending || serverLocked) return;
-        imageInput.click();
-      });
-
-      imageInput.addEventListener("change", async (e) => {
-        if (isSending || serverLocked) return;
-        const files = Array.from(e.target.files || []);
-        if (!files.length) return;
-        try {
-          addActivity(
-            currentLang === "en"
-              ? `Uploading ${files.length} image${files.length > 1 ? "s" : ""}...`
-              : `正在上傳 ${files.length} 張圖片...`
-          );
-          await uploadSelectedImages(files);
-          addActivity(
-            currentLang === "en"
-              ? `Upload done (${files.length})`
-              : `圖片上傳完成（${files.length}）`
-          );
-        } catch (error) {
-          addActivity(
-            currentLang === "en"
-              ? `Upload error: ${error instanceof Error ? error.message : "Unknown error"}`
-              : `上傳錯誤：${error instanceof Error ? error.message : "未知錯誤"}`
-          );
-          setStatus(error instanceof Error ? error.message : "Upload failed");
-        } finally {
-          imageInput.value = "";
-        }
-      });
-
-      attachmentList.addEventListener("click", (e) => {
-        if (!(e.target instanceof Element)) return;
-        const btn = e.target.closest("[data-remove-index]");
-        if (!btn) return;
-        const index = Number(btn.getAttribute("data-remove-index"));
-        if (Number.isNaN(index) || index < 0 || index >= uploadedImages.length) return;
-        uploadedImages.splice(index, 1);
-        renderAttachments();
-      });
-
-      promptInput.addEventListener("input", autoResizePrompt);
-      promptInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-          e.preventDefault();
-          form.requestSubmit();
-        }
-      });
-
-      langBtn.addEventListener("click", () => {
-        currentLang = currentLang === "en" ? "zh" : "en";
-        localStorage.setItem("chat_lang", currentLang);
-        applyLanguage();
-      });
-
-      modelPicker.addEventListener("change", () => {
-        currentModel = normalizeModelValue(modelPicker.value);
-        localStorage.setItem("chat_model", currentModel);
-        renderModelPicker();
-        addActivity(
-          currentLang === "en"
-            ? `Model switched: ${currentModel || "none"}`
-            : `模型已切換：${currentModel || "未設定"}`
-        );
-      });
-
-      helpBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        glossaryPanel.classList.toggle("open");
-        activityPanel.classList.remove("open");
-        placeGlossaryPanel();
-      });
-
-      activityBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        activityPanel.classList.toggle("open");
-        glossaryPanel.classList.remove("open");
-        placeActivityPanel();
-      });
-
-      document.addEventListener("click", (e) => {
-        if (!helpWrap.contains(e.target)) {
-          glossaryPanel.classList.remove("open");
-        }
-        if (!activityWrap.contains(e.target)) {
-          activityPanel.classList.remove("open");
-        }
-      });
-
-      window.addEventListener("resize", () => {
-        placeGlossaryPanel();
-        placeActivityPanel();
-        updateScrollToBottomButton();
-      });
-
-      (async () => {
-        try {
-          addActivity(currentLang === "en" ? "App started" : "應用已啟動");
-          setModelLoadingMask(true, false);
-          setLoading();
-          await loadModelOptions();
-          setModelLoadingMask(false, false);
-          await loadSessions();
-          await loadMessages(selectedSessionId);
-          await refreshServerLock();
-          applyLanguage();
-          autoResizePrompt();
-          updateScrollToBottomButton();
+      if (!runBootstrapApi) {
+        throw new Error("ChatBootstrapInitUtils.runBootstrap unavailable");
+      }
+      void runBootstrapApi({
+        addActivity,
+        appStartedText: currentLang === "en" ? "App started" : "應用已啟動",
+        setModelLoadingMask,
+        setLoading,
+        loadI18nMap,
+        loadModelOptions,
+        loadSessions,
+        loadMessages,
+        getSelectedSessionId: () => selectedSessionId,
+        refreshServerLock,
+        applyLanguage,
+        autoResizePrompt,
+        updateScrollToBottomButton,
+        focusPromptInput: () => {
           promptInput.focus();
+        },
+        startServerLockPolling: () => {
           setInterval(refreshServerLock, SERVER_LOCK_INTERVAL_MS);
-        } catch (error) {
-          setEmpty(error instanceof Error ? error.message : "Unknown error");
-          setStatus("Error");
-          setModelLoadingMask(true, true);
-        }
-      })();
+        },
+        setEmpty,
+        setStatus,
+        buildInitErrorText: (message) =>
+          currentLang === "en" ? `Init error: ${message}` : `初始化錯誤：${message}`,
+      });
     
 
 
