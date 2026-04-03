@@ -46,6 +46,60 @@
       let streamingAssistantBubble = null;
       let currentLang = localStorage.getItem("chat_lang") || "zh";
       const MODEL_PATTERN = /^[a-zA-Z0-9._:-]{1,80}$/;
+      const CHAT_CONSTANTS = window.ChatConstants || {};
+      const CHAT_API = CHAT_CONSTANTS.API || {};
+      const CHAT_STREAM_EVENT = CHAT_CONSTANTS.STREAM_EVENT || {};
+      const CHAT_STREAM_STATUS = CHAT_CONSTANTS.STREAM_STATUS || {};
+      const CHAT_ASSISTANT_PHASE = CHAT_CONSTANTS.ASSISTANT_PHASE || {};
+      const CHAT_ERROR_NAME = CHAT_CONSTANTS.ERROR_NAME || {};
+      const CHAT_ERROR_TOKEN = CHAT_CONSTANTS.ERROR_TOKEN || {};
+      const CHAT_RETRY = CHAT_CONSTANTS.RETRY || {};
+      const CHAT_POLL = CHAT_CONSTANTS.POLL || {};
+      const CHAT_SELECTOR = CHAT_CONSTANTS.CSS_SELECTOR || {};
+      const CHAT_IMAGE_PLACEHOLDER = CHAT_CONSTANTS.IMAGE_PLACEHOLDER || {};
+      const STREAM_EVENT_STATUS = CHAT_STREAM_EVENT.STATUS || "status";
+      const STREAM_EVENT_HEARTBEAT = CHAT_STREAM_EVENT.HEARTBEAT || "heartbeat";
+      const STREAM_EVENT_ACTIVITY = CHAT_STREAM_EVENT.ACTIVITY || "activity";
+      const STREAM_EVENT_SESSION = CHAT_STREAM_EVENT.SESSION || "session";
+      const STREAM_EVENT_ASSISTANT = CHAT_STREAM_EVENT.ASSISTANT || "assistant";
+      const STREAM_EVENT_ASSISTANT_BOUNDARY =
+        CHAT_STREAM_EVENT.ASSISTANT_BOUNDARY || "assistant_boundary";
+      const STREAM_EVENT_ASSISTANT_PHASE =
+        CHAT_STREAM_EVENT.ASSISTANT_PHASE || "assistant_phase";
+      const STREAM_EVENT_ERROR = CHAT_STREAM_EVENT.ERROR || "error";
+      const STREAM_EVENT_DONE = CHAT_STREAM_EVENT.DONE || "done";
+      const STREAM_STATUS_THINKING = CHAT_STREAM_STATUS.THINKING || "thinking";
+      const PHASE_FINAL_ANSWER = CHAT_ASSISTANT_PHASE.FINAL_ANSWER || "final_answer";
+      const PHASE_COMMENTARY = CHAT_ASSISTANT_PHASE.COMMENTARY || "commentary";
+      const ERROR_NAME_ABORT = CHAT_ERROR_NAME.ABORT || "AbortError";
+      const ERROR_TOKEN_STREAM_STALLED = CHAT_ERROR_TOKEN.STREAM_STALLED || "stream_stalled";
+      const ERROR_TOKEN_STREAM_INCOMPLETE =
+        CHAT_ERROR_TOKEN.STREAM_INCOMPLETE || "stream_incomplete";
+      const ERROR_TOKEN_STREAM_FAILED = CHAT_ERROR_TOKEN.STREAM_FAILED || "stream failed";
+      const ERROR_TOKEN_MODEL_ACCESS_DENIED =
+        CHAT_ERROR_TOKEN.MODEL_ACCESS_DENIED || "does not have access to model";
+      const ERROR_TOKEN_NETWORK_ERROR = CHAT_ERROR_TOKEN.NETWORK_ERROR || "networkerror";
+      const ERROR_TOKEN_FAILED_TO_FETCH = CHAT_ERROR_TOKEN.FAILED_TO_FETCH || "failed to fetch";
+      const ERROR_TOKEN_TIMEOUT = CHAT_ERROR_TOKEN.TIMEOUT || "timeout";
+      const ERROR_TOKEN_ABORTED = CHAT_ERROR_TOKEN.ABORTED || "aborted";
+      const STREAM_RETRY_MAX_ATTEMPTS = Number(CHAT_RETRY.STREAM_MAX_ATTEMPTS || 2);
+      const STREAM_RETRY_BASE_DELAY_MS = Number(CHAT_RETRY.STREAM_BASE_DELAY_MS || 600);
+      const STREAM_RETRY_MAX_DELAY_MS = Number(CHAT_RETRY.STREAM_MAX_DELAY_MS || 1800);
+      const STREAM_RETRY_JITTER_MS = Number(CHAT_RETRY.STREAM_JITTER_MS || 280);
+      const STREAM_STALL_CHECK_INTERVAL_MS = Number(
+        CHAT_RETRY.STREAM_STALL_CHECK_INTERVAL_MS || 2000
+      );
+      const STREAM_STALL_TIMEOUT_MS = Number(CHAT_RETRY.STREAM_STALL_TIMEOUT_MS || 150000);
+      const SYNC_RETRIES = Number(CHAT_RETRY.SYNC_RETRIES || 3);
+      const SYNC_DELAY_MS = Number(CHAT_RETRY.SYNC_DELAY_MS || 300);
+      const SYNC_POST_STREAM_RETRIES = Number(CHAT_RETRY.SYNC_POST_STREAM_RETRIES || 5);
+      const SYNC_POST_STREAM_DELAY_MS = Number(CHAT_RETRY.SYNC_POST_STREAM_DELAY_MS || 400);
+      const SYNC_BACKGROUND_RETRIES = Number(CHAT_RETRY.SYNC_BACKGROUND_RETRIES || 3);
+      const SYNC_BACKGROUND_DELAY_MS = Number(CHAT_RETRY.SYNC_BACKGROUND_DELAY_MS || 500);
+      const SERVER_LOCK_INTERVAL_MS = Number(CHAT_POLL.SERVER_LOCK_INTERVAL_MS || 2000);
+      const FINAL_ASSISTANT_ROWS_SELECTOR =
+        CHAT_SELECTOR.FINAL_ASSISTANT_ROWS ||
+        '.row.assistant[data-phase="final_answer"], .row.assistant.assistant-plain[data-phase="final_answer"]';
       let currentModel = normalizeModelValue(localStorage.getItem("chat_model"));
       let availableModels = [];
       let lastStats = null;
@@ -78,7 +132,7 @@
 
       async function loadModelOptions() {
         try {
-          const res = await fetch("/api/models");
+          const res = await fetch(CHAT_API.MODELS || "/api/models");
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Failed to load model list");
           const rawModels = Array.isArray(data.models) ? data.models : [];
@@ -775,7 +829,7 @@
           const formData = new FormData();
           formData.append("file", file);
 
-          const res = await fetch("/api/uploads", {
+          const res = await fetch(CHAT_API.UPLOADS || "/api/uploads", {
             method: "POST",
             body: formData,
           });
@@ -1047,12 +1101,16 @@
           timestamp ? ` · ${formatTs(timestamp)}` : ""
         }`;
 
-        if (normalizedPhase && normalizedPhase !== "final_answer") {
+        if (normalizedPhase && normalizedPhase !== PHASE_FINAL_ANSWER) {
           const row = createProcessBlock(renderText, metaText, false, normalizedPhase);
           appendMessageImageAttachments(row, parsed.images);
           return row;
         }
-        const row = createAssistantPlainBlock(renderText, metaText, normalizedPhase || "final_answer");
+        const row = createAssistantPlainBlock(
+          renderText,
+          metaText,
+          normalizedPhase || PHASE_FINAL_ANSWER
+        );
         appendMessageImageAttachments(row, parsed.images);
         return row;
       }
@@ -1080,7 +1138,7 @@
           }
 
           const phase = String(m?.phase || "").trim();
-          const isProcess = phase !== "final_answer";
+          const isProcess = phase !== PHASE_FINAL_ANSWER;
           if (!isProcess) {
             flushPending();
             grouped.push(m);
@@ -1089,7 +1147,7 @@
 
           if (!pendingAssistantGroup) {
             pendingAssistantGroup = {
-              phase: phase || "commentary",
+              phase: phase || PHASE_COMMENTARY,
               timestamp: m.timestamp || "",
               texts: [m.text || ""],
             };
@@ -1136,7 +1194,7 @@
           const phase = String(row.dataset.phase || "").trim();
           const next = rows[i + 1];
           const nextPhase = next instanceof HTMLElement ? String(next.dataset.phase || "").trim() : "";
-          const shouldShow = phase !== "final_answer" && nextPhase === "final_answer";
+          const shouldShow = phase !== PHASE_FINAL_ANSWER && nextPhase === PHASE_FINAL_ANSWER;
           ensureProcessFinalDivider(row, shouldShow);
         }
       }
@@ -1264,7 +1322,7 @@
         const raw = String(phase || "").trim();
         if (!raw || currentLang === "en") return raw;
         const PHASE_ZH = {
-          final_answer: "最終回覆",
+          [PHASE_FINAL_ANSWER]: "最終回覆",
           reasoning: "推理",
           analysis: "分析",
           commentary: "說明",
@@ -1285,7 +1343,7 @@
 
       function autoSwitchModelOnAccessError(messageText) {
         const text = String(messageText || "").toLowerCase();
-        if (!text.includes("does not have access to model")) return false;
+        if (!text.includes(ERROR_TOKEN_MODEL_ACCESS_DENIED)) return false;
 
         const preferred = availableModels.find((item) => item.value === "gpt-5.2")?.value;
         const fallback =
@@ -1365,7 +1423,10 @@
           return;
         }
         try {
-          const res = await fetch(`/api/sessions/${sessionId}/stats`);
+          const statsEndpoint = CHAT_API.SESSION_STATS
+            ? CHAT_API.SESSION_STATS(sessionId)
+            : `/api/sessions/${sessionId}/stats`;
+          const res = await fetch(statsEndpoint);
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "stats error");
           lastStats = data.stats || null;
@@ -1378,7 +1439,7 @@
 
       async function loadSessions() {
         addActivity(currentLang === "en" ? "Loading sessions list..." : "正在載入 session 清單...");
-        const res = await fetch("/api/sessions");
+        const res = await fetch(CHAT_API.SESSIONS || "/api/sessions");
         const data = await res.json();
         const sessions = (data.sessions || []).slice().sort((a, b) => {
           const ta = Date.parse(a?.updatedAt || "") || 0;
@@ -1436,7 +1497,10 @@
         );
         if (showLoading) setLoading();
         updateUrl(sessionId);
-        const res = await fetch(`/api/sessions/${sessionId}/messages`);
+        const messagesEndpoint = CHAT_API.SESSION_MESSAGES
+          ? CHAT_API.SESSION_MESSAGES(sessionId)
+          : `/api/sessions/${sessionId}/messages`;
+        const res = await fetch(messagesEndpoint);
         const data = await res.json();
         if (!res.ok) {
           setEmpty(data.error || "Failed to load messages");
@@ -1455,7 +1519,10 @@
       async function syncMessagesNoFlicker(sessionId) {
         if (!sessionId) return;
         if (isSending || streamingAssistantBubble) return;
-        const res = await fetch(`/api/sessions/${sessionId}/messages`);
+        const messagesEndpoint = CHAT_API.SESSION_MESSAGES
+          ? CHAT_API.SESSION_MESSAGES(sessionId)
+          : `/api/sessions/${sessionId}/messages`;
+        const res = await fetch(messagesEndpoint);
         const data = await res.json();
         if (!res.ok) return;
         renderMessages(data.messages || [], { preserveScroll: true });
@@ -1463,17 +1530,19 @@
 
       async function syncMessagesForce(sessionId) {
         if (!sessionId) return;
-        const res = await fetch(`/api/sessions/${sessionId}/messages`);
+        const messagesEndpoint = CHAT_API.SESSION_MESSAGES
+          ? CHAT_API.SESSION_MESSAGES(sessionId)
+          : `/api/sessions/${sessionId}/messages`;
+        const res = await fetch(messagesEndpoint);
         const data = await res.json();
         if (!res.ok) return;
         const incoming = Array.isArray(data.messages) ? data.messages : [];
-        const domHasFinalAssistant = Boolean(
-          chat.querySelector(
-            '.row.assistant[data-phase="final_answer"], .row.assistant.assistant-plain[data-phase="final_answer"]'
-          )
-        );
+        const domHasFinalAssistant = Boolean(chat.querySelector(FINAL_ASSISTANT_ROWS_SELECTOR));
         const serverHasFinalAssistant = incoming.some(
-          (m) => m?.role === "assistant" && m?.type !== "image" && String(m?.phase || "").trim() === "final_answer"
+          (m) =>
+            m?.role === "assistant" &&
+            m?.type !== "image" &&
+            String(m?.phase || "").trim() === PHASE_FINAL_ANSWER
         );
         // Protect against race: if UI already has a streamed final answer but
         // server persistence lags behind, don't overwrite with older state.
@@ -1481,7 +1550,11 @@
         renderMessages(incoming, { preserveScroll: true });
       }
 
-      async function syncMessagesWithRetry(sessionId, retries = 3, delayMs = 300) {
+      async function syncMessagesWithRetry(
+        sessionId,
+        retries = SYNC_RETRIES,
+        delayMs = SYNC_DELAY_MS
+      ) {
         if (!sessionId) return;
         for (let i = 0; i < retries; i += 1) {
           await syncMessagesForce(sessionId);
@@ -1574,7 +1647,7 @@
         try {
           await loadSessions();
           picker.value = sessionId;
-          await syncMessagesWithRetry(sessionId, 3, 300);
+          await syncMessagesWithRetry(sessionId, SYNC_RETRIES, SYNC_DELAY_MS);
           await loadStats(sessionId);
           await reconcileAssistantSplitFromSession(sessionId);
           return true;
@@ -1591,7 +1664,10 @@
 
         let data;
         try {
-          const res = await fetch(`/api/sessions/${sessionId}/messages`);
+          const messagesEndpoint = CHAT_API.SESSION_MESSAGES
+            ? CHAT_API.SESSION_MESSAGES(sessionId)
+            : `/api/sessions/${sessionId}/messages`;
+          const res = await fetch(messagesEndpoint);
           data = await res.json();
           if (!res.ok) return;
         } catch {
@@ -1610,8 +1686,12 @@
         const textTail = tail.filter((m) => m?.type !== "image");
         if (!textTail.length) return;
 
-        const processItems = textTail.filter((m) => String(m?.phase || "").trim() !== "final_answer");
-        const finalItems = textTail.filter((m) => String(m?.phase || "").trim() === "final_answer");
+        const processItems = textTail.filter(
+          (m) => String(m?.phase || "").trim() !== PHASE_FINAL_ANSWER
+        );
+        const finalItems = textTail.filter(
+          (m) => String(m?.phase || "").trim() === PHASE_FINAL_ANSWER
+        );
         if (!processItems.length || !finalItems.length) return;
 
         const firstProcess = processItems[0];
@@ -1633,7 +1713,7 @@
 
       async function refreshServerLock() {
         try {
-          const res = await fetch("/api/chat/status");
+          const res = await fetch(CHAT_API.CHAT_STATUS || "/api/chat/status");
           const data = await res.json();
           const ids = Array.isArray(data.activeSessionIds) ? data.activeSessionIds : [];
           const hasGlobal = Number(data.activeRunCount || 0) > 0;
@@ -1648,8 +1728,10 @@
 
       async function sendWithoutStream(promptWithImages) {
         const endpoint = selectedSessionId
-          ? `/api/sessions/${selectedSessionId}/chat`
-          : "/api/sessions/new/chat";
+          ? CHAT_API.SESSION_CHAT
+            ? CHAT_API.SESSION_CHAT(selectedSessionId)
+            : `/api/sessions/${selectedSessionId}/chat`
+          : CHAT_API.NEW_SESSION_CHAT || "/api/sessions/new/chat";
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1669,6 +1751,41 @@
         }
       }
 
+      function delayMs(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function getRetryBackoffMs(attemptIndex) {
+        const exp = STREAM_RETRY_BASE_DELAY_MS * Math.pow(2, Math.max(0, attemptIndex - 1));
+        const jitter = Math.floor(Math.random() * STREAM_RETRY_JITTER_MS);
+        return Math.min(STREAM_RETRY_MAX_DELAY_MS, exp + jitter);
+      }
+
+      function normalizeErrorText(error) {
+        if (typeof error === "string") return error.toLowerCase();
+        if (error instanceof Error) return String(error.message || "").toLowerCase();
+        return String(error || "").toLowerCase();
+      }
+
+      function isRetryableStreamError(error) {
+        const isAbortError =
+          (error instanceof DOMException && error.name === ERROR_NAME_ABORT) ||
+          (error instanceof Error && error.name === ERROR_NAME_ABORT);
+        if (isAbortError) return true;
+
+        const text = normalizeErrorText(error);
+        if (!text) return false;
+        return (
+          text.includes(ERROR_TOKEN_STREAM_STALLED) ||
+          text.includes(ERROR_TOKEN_STREAM_INCOMPLETE) ||
+          text.includes(ERROR_TOKEN_STREAM_FAILED) ||
+          text.includes(ERROR_TOKEN_NETWORK_ERROR) ||
+          text.includes(ERROR_TOKEN_FAILED_TO_FETCH) ||
+          text.includes(ERROR_TOKEN_TIMEOUT) ||
+          text.includes(ERROR_TOKEN_ABORTED)
+        );
+      }
+
       async function sendMessage(prompt, imagesToSend = []) {
         setSendingState(true);
         setStatus(t("statusSending"));
@@ -1685,8 +1802,8 @@
             ? prompt
             : imagesToSend.length > 0
               ? currentLang === "en"
-                ? "[Image attachment]"
-                : "[圖片附件]"
+                ? CHAT_IMAGE_PLACEHOLDER.EN || "[Image attachment]"
+                : CHAT_IMAGE_PLACEHOLDER.ZH || "[圖片附件]"
               : "";
         const userRow = appendMessage("user", userText, t("userNow"));
         appendMessageImageAttachments(userRow, imagesToSend);
@@ -1712,12 +1829,12 @@
           stallTimer = setInterval(() => {
             // Network can silently stall while the UI remains in "thinking...".
             // Abort and force a sync fallback so the final answer can still appear.
-            if (Date.now() - lastChunkAt > 90000) {
-              abortController.abort("stream_stalled");
+            if (Date.now() - lastChunkAt > STREAM_STALL_TIMEOUT_MS) {
+              abortController.abort(ERROR_TOKEN_STREAM_STALLED);
             }
-          }, 2000);
+          }, STREAM_STALL_CHECK_INTERVAL_MS);
 
-          const res = await fetch("/api/chat/stream", {
+          const res = await fetch(CHAT_API.CHAT_STREAM || "/api/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1763,16 +1880,16 @@
                 continue;
               }
 
-              if (event.type === "status") {
+              if (event.type === STREAM_EVENT_STATUS) {
                 gotStreamEvent = true;
-                const text = String(event.text || "thinking");
+                const text = String(event.text || STREAM_STATUS_THINKING);
                 const statusText = localizeStatusWord(text);
                 const statusLine =
                   currentLang === "en"
                     ? `Status: ${statusText || text}`
                     : `狀態：${statusText || text}`;
                 setStatus(
-                  text === "thinking"
+                  text === STREAM_STATUS_THINKING
                     ? t("statusThinking")
                     : `${t("statusSending")} (${statusText || text})`
                 );
@@ -1780,11 +1897,11 @@
                 showActivityBubble(statusLine, true);
                 continue;
               }
-              if (event.type === "heartbeat") {
+              if (event.type === STREAM_EVENT_HEARTBEAT) {
                 gotStreamEvent = true;
                 continue;
               }
-              if (event.type === "activity") {
+              if (event.type === STREAM_EVENT_ACTIVITY) {
                 gotStreamEvent = true;
                 const rawText = String(event.text || "").trim();
                 const text = formatActivityEvent(event);
@@ -1792,7 +1909,7 @@
                 if (rawText) appendStreamActivity(rawText);
                 continue;
               }
-              if (event.type === "session" && event.sessionId) {
+              if (event.type === STREAM_EVENT_SESSION && event.sessionId) {
                 gotStreamEvent = true;
                 selectedSessionId = event.sessionId;
                 updateUrl(selectedSessionId);
@@ -1803,7 +1920,7 @@
                 );
                 continue;
               }
-              if (event.type === "assistant") {
+              if (event.type === STREAM_EVENT_ASSISTANT) {
                 gotStreamEvent = true;
                 if (streamingAssistantBubble) {
                   appendStreamNote(event.text || "");
@@ -1812,22 +1929,22 @@
                 updateScrollToBottomButton();
                 continue;
               }
-              if (event.type === "assistant_boundary") {
+              if (event.type === STREAM_EVENT_ASSISTANT_BOUNDARY) {
                 gotStreamEvent = true;
                 splitLiveAssistantBubble();
                 continue;
               }
-              if (event.type === "assistant_phase") {
+              if (event.type === STREAM_EVENT_ASSISTANT_PHASE) {
                 gotStreamEvent = true;
                 updateLiveAssistantPhase(event.phase || "");
                 continue;
               }
-              if (event.type === "error") {
+              if (event.type === STREAM_EVENT_ERROR) {
                 const errMsg = String(event.message || "Unknown stream error");
                 autoSwitchModelOnAccessError(errMsg);
                 throw new Error(errMsg);
               }
-              if (event.type === "done") {
+              if (event.type === STREAM_EVENT_DONE) {
                 streamDone = true;
                 setStatus(t("statusDone"));
                 scheduleCollapseCommandLogs(3500);
@@ -1843,18 +1960,18 @@
           if (buffer.trim()) {
             try {
               const event = JSON.parse(buffer);
-              if (event.type === "assistant" && streamingAssistantBubble) {
+              if (event.type === STREAM_EVENT_ASSISTANT && streamingAssistantBubble) {
                 appendStreamNote(event.text || "");
-              } else if (event.type === "assistant_boundary") {
+              } else if (event.type === STREAM_EVENT_ASSISTANT_BOUNDARY) {
                 splitLiveAssistantBubble();
-              } else if (event.type === "assistant_phase") {
+              } else if (event.type === STREAM_EVENT_ASSISTANT_PHASE) {
                 updateLiveAssistantPhase(event.phase || "");
-              } else if (event.type === "activity") {
+              } else if (event.type === STREAM_EVENT_ACTIVITY) {
                 const rawText = String(event.text || "").trim();
                 const text = formatActivityEvent(event);
                 if (text) addActivity(text);
                 if (rawText) appendStreamActivity(rawText);
-              } else if (event.type === "done") {
+              } else if (event.type === STREAM_EVENT_DONE) {
                 streamDone = true;
                 setStatus(t("statusDone"));
                 scheduleCollapseCommandLogs(3500);
@@ -1869,7 +1986,7 @@
             }
           }
           if (!streamDone) {
-            throw new Error("stream_incomplete");
+            throw new Error(ERROR_TOKEN_STREAM_INCOMPLETE);
           }
 
           if (selectedSessionId) {
@@ -1879,11 +1996,19 @@
               await new Promise((resolve) => setTimeout(resolve, 900));
               await loadSessions();
               picker.value = bgSessionId;
-              await syncMessagesWithRetry(bgSessionId, 5, 400);
+              await syncMessagesWithRetry(
+                bgSessionId,
+                SYNC_POST_STREAM_RETRIES,
+                SYNC_POST_STREAM_DELAY_MS
+              );
               await loadStats(bgSessionId);
               setTimeout(() => {
                 loadSessions().catch(() => {});
-                syncMessagesWithRetry(bgSessionId, 3, 500).catch(() => {});
+                syncMessagesWithRetry(
+                  bgSessionId,
+                  SYNC_BACKGROUND_RETRIES,
+                  SYNC_BACKGROUND_DELAY_MS
+                ).catch(() => {});
               }, 1500);
             })();
           }
@@ -1895,27 +2020,40 @@
             stallTimer = null;
           }
 
-          const isAbortError =
-            (error instanceof DOMException && error.name === "AbortError") ||
-            (error instanceof Error && error.name === "AbortError");
-          const isStallAbort =
-            isAbortError ||
-            (typeof error === "string" && error === "stream_stalled") ||
-            (error instanceof Error && error.message.includes("stream_stalled"));
-          const isIncompleteStream =
-            error instanceof Error && error.message.includes("stream_incomplete");
+          const retryableError = isRetryableStreamError(error);
 
           let recovered = false;
-          if (selectedSessionId && (isStallAbort || isIncompleteStream || gotStreamEvent || !streamDone)) {
+          if (selectedSessionId && (retryableError || gotStreamEvent || !streamDone)) {
             recovered = await recoverAfterStreamInterruption(selectedSessionId);
+          }
+
+          if (!recovered && retryableError && !gotStreamEvent) {
+            for (let attempt = 1; attempt <= STREAM_RETRY_MAX_ATTEMPTS; attempt += 1) {
+              const retryDelay = getRetryBackoffMs(attempt);
+              addActivity(
+                currentLang === "en"
+                  ? `Stream failed early, retrying via sync mode (${attempt}/${STREAM_RETRY_MAX_ATTEMPTS})...`
+                  : `串流初期失敗，改用同步模式重試（${attempt}/${STREAM_RETRY_MAX_ATTEMPTS}）...`
+              );
+              await delayMs(retryDelay);
+              try {
+                await sendWithoutStream(promptForModel);
+                recovered = true;
+                break;
+              } catch (retryError) {
+                if (attempt >= STREAM_RETRY_MAX_ATTEMPTS) {
+                  throw retryError;
+                }
+              }
+            }
           }
 
           if (recovered) {
             setStatus(t("statusReady"));
             addActivity(
               currentLang === "en"
-                ? "Stream interrupted; synced latest messages from server."
-                : "串流中斷，已從伺服器同步最新訊息。"
+                ? "Stream interrupted; recovered via sync fallback."
+                : "串流中斷，已透過同步備援恢復。"
             );
             hideActivityBubble(900);
           } else {
@@ -2172,7 +2310,7 @@
           autoResizePrompt();
           updateScrollToBottomButton();
           promptInput.focus();
-          setInterval(refreshServerLock, 2000);
+          setInterval(refreshServerLock, SERVER_LOCK_INTERVAL_MS);
         } catch (error) {
           setEmpty(error instanceof Error ? error.message : "Unknown error");
           setStatus("Error");

@@ -1,4 +1,4 @@
-﻿import { Hono } from "hono";
+import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -10,6 +10,12 @@ import {
   getSessionMessages,
   listSessions,
 } from "./domain/session-service";
+import {
+  CHAT_EXECUTION_MODE,
+  CHAT_STREAM_ERROR,
+  CHAT_STREAM_EVENT,
+  CHAT_STREAM_STATUS,
+} from "./constants/chat-stream";
 
 const app = new Hono();
 const activeSessionRuns = new Map<string, number>();
@@ -690,18 +696,18 @@ app.post("/api/chat/stream", async (c) => {
     const resolved = path.resolve(trimmed);
     const lowerResolved = resolved.toLowerCase();
     if (lowerResolved !== uploadsRoot.toLowerCase() && !lowerResolved.startsWith(uploadsRootPrefix)) {
-      return c.json({ error: "Image path is outside allowed upload directory" }, 400);
+      return c.json({ error: CHAT_STREAM_ERROR.IMAGE_OUTSIDE_UPLOAD_DIR }, 400);
     }
 
     if (!(await Bun.file(resolved).exists())) {
-      return c.json({ error: `Image file not found: ${path.basename(resolved)}` }, 400);
+      return c.json({ error: `${CHAT_STREAM_ERROR.IMAGE_NOT_FOUND_PREFIX} ${path.basename(resolved)}` }, 400);
     }
 
     normalizedImages.push(resolved);
   }
 
   if (!userPrompt) {
-    return c.json({ error: "Prompt is required" }, 400);
+    return c.json({ error: CHAT_STREAM_ERROR.PROMPT_REQUIRED }, 400);
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -762,7 +768,7 @@ app.post("/api/chat/stream", async (c) => {
       };
       heartbeatTimer = setInterval(() => {
         if (stopRequested) return;
-        push({ type: "heartbeat", at: Date.now() });
+        push({ type: CHAT_STREAM_EVENT.HEARTBEAT, at: Date.now() });
       }, 5000);
       const pushAssistantChunked = async (text: string) => {
         const normalized = text.trim();
@@ -775,14 +781,14 @@ app.post("/api/chat/stream", async (c) => {
 
         if (lines.length > 1) {
           for (const line of lines) {
-            push({ type: "assistant", text: line });
+            push({ type: CHAT_STREAM_EVENT.ASSISTANT, text: line });
           }
           return;
         }
 
         const chunkSize = 120;
         for (let i = 0; i < normalized.length; i += chunkSize) {
-          push({ type: "assistant", text: normalized.slice(i, i + chunkSize) });
+          push({ type: CHAT_STREAM_EVENT.ASSISTANT, text: normalized.slice(i, i + chunkSize) });
         }
       };
 
@@ -803,14 +809,14 @@ app.post("/api/chat/stream", async (c) => {
         if (normalizedSessionId) {
           args.push(
             "-s",
-            "danger-full-access",
+            CHAT_EXECUTION_MODE.FULL_ACCESS,
             "resume",
             normalizedSessionId,
             "--skip-git-repo-check",
             "--json"
           );
         } else {
-          args.push("-s", "danger-full-access", "--skip-git-repo-check", "--json");
+          args.push("-s", CHAT_EXECUTION_MODE.FULL_ACCESS, "--skip-git-repo-check", "--json");
         }
 
         proc = Bun.spawn(args, {
@@ -836,7 +842,7 @@ app.post("/api/chat/stream", async (c) => {
           stdin.end();
         }
 
-        push({ type: "status", text: "started" });
+        push({ type: CHAT_STREAM_EVENT.STATUS, text: CHAT_STREAM_STATUS.STARTED });
 
         const stdout = proc.stdout;
         const reader = stdout && typeof stdout !== "number" ? stdout.getReader() : null;
@@ -882,13 +888,13 @@ app.post("/api/chat/stream", async (c) => {
 
               const activity = summarizeCodexEvent(row, toolNameByCallId);
               if (activity) {
-                push({ type: "activity", code: activity.code, text: activity.text });
+                push({ type: CHAT_STREAM_EVENT.ACTIVITY, code: activity.code, text: activity.text });
               }
 
               const assistantPhase = collectAssistantPhaseFromRow(row);
               if (assistantPhase && assistantPhase !== lastAssistantPhase) {
                 lastAssistantPhase = assistantPhase;
-                push({ type: "assistant_phase", phase: assistantPhase });
+                push({ type: CHAT_STREAM_EVENT.ASSISTANT_PHASE, phase: assistantPhase });
               }
 
               if (row?.type === "thread.started" && typeof row.thread_id === "string") {
@@ -896,19 +902,19 @@ app.post("/api/chat/stream", async (c) => {
                   trackedSessionId = row.thread_id;
                   markSessionStart(trackedSessionId);
                 }
-                push({ type: "session", sessionId: row.thread_id });
+                push({ type: CHAT_STREAM_EVENT.SESSION, sessionId: row.thread_id });
                 continue;
               }
 
               if (row?.type === "turn.started") {
-                push({ type: "status", text: "thinking" });
+                push({ type: CHAT_STREAM_EVENT.STATUS, text: CHAT_STREAM_STATUS.THINKING });
                 continue;
               }
 
               const assistantTexts = collectAssistantTextsFromRow(row);
               if (assistantTexts.length > 0) {
                 if (isAssistantBoundaryRow(row)) {
-                  push({ type: "assistant_boundary" });
+                  push({ type: CHAT_STREAM_EVENT.ASSISTANT_BOUNDARY });
                 }
                 for (const text of assistantTexts) {
                   await pushAssistantChunked(text);
@@ -945,10 +951,10 @@ app.post("/api/chat/stream", async (c) => {
             lastCodexErrorMessage: lastCodexErrorMessage || null,
           });
           push({
-            type: "error",
+            type: CHAT_STREAM_EVENT.ERROR,
             message:
               (sawReconnectHeaderDecodeNoise
-                ? "Network stream decode error detected during reconnect attempts. Please check network stability/VPN path and retry."
+                ? CHAT_STREAM_ERROR.NETWORK_RECONNECT_DECODE
                 : "") ||
               lastCodexErrorMessage ||
               stderrText.trim() ||
@@ -957,7 +963,7 @@ app.post("/api/chat/stream", async (c) => {
         }
 
         if (!stopRequested) {
-          push({ type: "done" });
+          push({ type: CHAT_STREAM_EVENT.DONE });
         }
       } catch (error) {
         await logError("POST /api/chat/stream", error, {
@@ -967,10 +973,10 @@ app.post("/api/chat/stream", async (c) => {
         });
         if (!stopRequested) {
           push({
-            type: "error",
+            type: CHAT_STREAM_EVENT.ERROR,
             message: toErrorMessage(error),
           });
-          push({ type: "done" });
+          push({ type: CHAT_STREAM_EVENT.DONE });
         }
       } finally {
         if (hardTimeoutTimer) {
@@ -1097,7 +1103,3 @@ export default {
   port: Number(process.env.PORT ?? 3000),
   fetch: app.fetch,
 };
-
-
-
-

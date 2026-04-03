@@ -1,5 +1,5 @@
-﻿import path from "node:path";
-
+import path from "node:path";
+import { CHAT_EXECUTION_MODE } from "../constants/chat-stream";
 type SessionIndexRow = {
   id: string;
   thread_name?: string;
@@ -525,7 +525,7 @@ export async function chatWithSession(
   }
   args.push(
     "-s",
-    "danger-full-access",
+    CHAT_EXECUTION_MODE.FULL_ACCESS,
     "resume",
     normalizedSessionId,
     "-",
@@ -583,7 +583,7 @@ export async function createNewSession(
   if (normalizedModel) {
     args.push("-m", normalizedModel);
   }
-  args.push("-s", "danger-full-access", "--skip-git-repo-check", "--json", "-");
+  args.push("-s", CHAT_EXECUTION_MODE.FULL_ACCESS, "--skip-git-repo-check", "--json", "-");
 
   const proc = Bun.spawn(
     args,
